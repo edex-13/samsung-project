@@ -1,0 +1,29 @@
+# Entorno virtual
+venv/
+env/
+ENV/
+
+# Archivos de resultados
+resultados.xlsx
+*.xlsx
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Archivos de Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.swp
+*.swo 
