@@ -26,20 +26,97 @@ def get_url_mercadolibre(dispositivo_formateado, condicion):
     return base + hash_filtro
 
 def extraer_id_producto(url: str) -> Optional[str]:
+    """
+    Extrae el ID del producto de la URL de MercadoLibre
+    Maneja diferentes formatos de URL y valida que el ID sea correcto
+    """
+    if not url:
+        return None
+    
+    # Patrón 1: MCO-12345678901
     match = re.search(r'(MCO-?\d{10,})', url)
     if match:
-        return match.group(1)
+        id_producto = match.group(1)
+        # Asegurar formato consistente
+        if id_producto.startswith('MCO-'):
+            return id_producto
+        else:
+            return f"MCO-{id_producto[3:]}"
+    
+    # Patrón 2: /MCO12345678901
     match2 = re.search(r'/MCO(\d{10,})', url)
     if match2:
         return f"MCO-{match2.group(1)}"
+    
+    # Patrón 3: /p/MCO12345678901
+    match3 = re.search(r'/p/MCO(\d{10,})', url)
+    if match3:
+        return f"MCO-{match3.group(1)}"
+    
+    # Patrón 4: /p/MCO-12345678901
+    match4 = re.search(r'/p/(MCO-?\d{10,})', url)
+    if match4:
+        id_producto = match4.group(1)
+        if id_producto.startswith('MCO-'):
+            return id_producto
+        else:
+            return f"MCO-{id_producto[3:]}"
+    
     return None
+
+
+async def extraer_precios_producto(page) -> Dict:
+    """
+    Extrae precios del producto, manejando descuentos
+    """
+    precios = {
+        'precio_actual': None,
+        'precio_original': None,
+        'porcentaje_descuento': None
+    }
+    
+    try:
+        # Buscar precio actual (con descuento si existe) - buscar en la segunda línea
+        precio_actual_element = await page.query_selector('div.ui-pdp-price__second-line span.andes-money-amount__fraction')
+        if not precio_actual_element:
+            # Fallback: buscar cualquier precio principal
+            precio_actual_element = await page.query_selector('span.andes-money-amount__fraction[style*="font-size:36"]')
+        if not precio_actual_element:
+            precio_actual_element = await page.query_selector('span.andes-money-amount__fraction')
+        
+        if precio_actual_element:
+            precio_texto = await precio_actual_element.inner_text()
+            precio_limpio = re.sub(r'[^\d]', '', precio_texto)
+            precios['precio_actual'] = int(precio_limpio) if precio_limpio else None
+        
+        # Buscar precio original (tachado) - buscar en el elemento <s>
+        precio_original_element = await page.query_selector('s.andes-money-amount__fraction')
+        if precio_original_element:
+            precio_texto = await precio_original_element.inner_text()
+            precio_limpio = re.sub(r'[^\d]', '', precio_texto)
+            precios['precio_original'] = int(precio_limpio) if precio_limpio else None
+        
+        # Buscar porcentaje de descuento
+        descuento_element = await page.query_selector('span.andes-money-amount__discount')
+        if descuento_element:
+            descuento_texto = await descuento_element.inner_text()
+            match = re.search(r'(\d+)%', descuento_texto)
+            if match:
+                precios['porcentaje_descuento'] = int(match.group(1))
+        
+    except Exception as e:
+        print(f"    ⚠️ Error extrayendo precios: {str(e)}")
+    return precios
 
 async def scrape_completo():
     """
     Scraper completo que integra búsqueda inicial, detalles y variaciones
     """
     
-    todos_productos = []
+    todos_productos = []  # Array para productos principales
+    todas_variaciones = []  # Array para almacenar todas las variaciones
+    productos_procesados = set()  # Para evitar duplicados
+    variaciones_recolectadas = set()  # Para evitar duplicados en recolección
     total_busquedas = len(DISPOSITIVOS) * len(CONDICIONES)
     busqueda_actual = 0
     fecha_scraping = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -59,7 +136,15 @@ async def scrape_completo():
             headless=True,
             args=[
                 f'--user-agent={user_agent}',
-                f'--window-size={viewport_width},{viewport_height}'
+                f'--window-size={viewport_width},{viewport_height}',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-gpu',
+                '--disable-web-security',
+                '--disable-features=VizDisplayCompositor',
+                '--memory-pressure-off',
+                '--max_old_space_size=4096'
             ]
         )
         
@@ -71,6 +156,10 @@ async def scrape_completo():
                 busqueda_actual += 1
                 print(f"\n🔍 Búsqueda {busqueda_actual}/{total_busquedas}: {dispositivo} - {condicion}")
                 
+                # Delay muy conservador antes de cada búsqueda (modelo) - solo después de la primera
+                if busqueda_actual > 1:
+                    await asyncio.sleep(random.uniform(600, 610))  # 10 minutos entre modelos
+                
                 try:
                     # PASO 1: Búsqueda inicial
                     productos_busqueda = await scrape_busqueda_inicial(page, dispositivo, condicion)
@@ -78,29 +167,47 @@ async def scrape_completo():
                     if productos_busqueda:
                         print(f"✅ Encontrados {len(productos_busqueda)} productos en búsqueda inicial")
                         
-                        # PASO 2: Extraer detalles de cada producto
+                        # PASO 2: Extraer detalles de cada producto y recolectar variaciones
                         for i, producto in enumerate(productos_busqueda):
                             print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
+                            print(f"    🔗 URL: {producto['url']}")
+                            
+                            # Verificar si ya procesamos este producto - COMENTADO TEMPORALMENTE
+                            # id_producto = extraer_id_producto(producto['url'])
+                            # if id_producto in productos_procesados:
+                            #     print(f"    ⚠️ Producto ya procesado, saltando")
+                            #     continue
+                            
+                            # productos_procesados.add(id_producto)
+                            
+                            # Delay entre productos individuales
+                            await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos entre productos
                             
                             try:
+                                # PASO 3lectar variaciones ANTES de extraer detalles
+                                variaciones_producto = await recolectar_variaciones_producto(page, producto, fecha_scraping, variaciones_recolectadas)
+                                if variaciones_producto:
+                                    print(f"    ✅ Recolectadas {len(variaciones_producto)} variaciones")
+                                    todas_variaciones.extend(variaciones_producto)
+                                else:
+                                    print(f"    ⚠️ No se encontraron variaciones")
+                                
                                 # Extraer detalles del producto
                                 producto_con_detalles = await extraer_detalles_producto(page, producto, fecha_scraping)
                                 todos_productos.append(producto_con_detalles)
                                 
-                                # PASO 3: Extraer variaciones si existen
-                                variaciones = await extraer_variaciones_producto(page, producto, fecha_scraping)
-                                if variaciones:
-                                    print(f"    ✅ Encontradas {len(variaciones)} variaciones")
-                                    todos_productos.extend(variaciones)
-                                else:
-                                    print(f"    ⚠️ No se encontraron variaciones")
+                                # Delay después de procesar cada producto
+                                await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos después de cada producto
                                 
-                                await asyncio.sleep(random.uniform(2.0, 4.0))
+                                # Limpieza de memoria después de cada producto
+                                try:
+                                    await page.evaluate("window.gc && window.gc()")
+                                except:
+                                    pass
                                 
                             except Exception as e:
                                 print(f"    ❌ Error procesando producto: {str(e)}")
                                 producto['fecha_scraping'] = fecha_scraping
-                                producto['es_variacion'] = False
                                 todos_productos.append(producto)
                                 continue
                     else:
@@ -113,6 +220,39 @@ async def scrape_completo():
                     
                 except Exception as e:
                     print(f"❌ Error en búsqueda {dispositivo} ({condicion}): {str(e)}")
+                    continue
+        
+        # PASO4Procesar todas las variaciones recolectadas
+        if todas_variaciones:
+            print(f"\n🔄 Procesando {len(todas_variaciones)} variaciones recolectadas...")
+            
+            for i, variacion in enumerate(todas_variaciones):
+                print(f"  🔍 Procesando variación {i+1}/{len(todas_variaciones)})             print(f🔗 URL: {variacion['url']}")
+                
+                # Verificar si ya procesamos esta variación - COMENTADO TEMPORALMENTE
+                # id_variacion = extraer_id_producto(variacion['url'])
+                # if id_variacion in productos_procesados:
+                #     print(f"    ⚠️ Variación ya procesada, saltando")
+                #     continue
+                
+                # productos_procesados.add(id_variacion)
+                
+                # Delay entre variaciones
+                await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos entre variaciones
+                
+                try:
+                    # Procesar variación como producto completamente independiente
+                    variacion_procesada = await procesar_variacion_completa(page, variacion, fecha_scraping)
+                    todos_productos.append(variacion_procesada)
+                    
+                    # Delay después de procesar cada variación
+                    await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos después de cada variación
+                    
+                except Exception as e:
+                    print(f"    ❌ Error procesando variación: {str(e)}")
+                    variacion['fecha_scraping'] = fecha_scraping
+                    variacion['es_variacion'] = True
+                    todos_productos.append(variacion)
                     continue
         
         await browser.close()
@@ -154,7 +294,7 @@ async def scrape_busqueda_inicial(page, dispositivo: str, condicion: str) -> Lis
             url_pagina = f"{url}_Desde_{(pagina_actual-1)*50+1}"
         
         try:
-            timeout = random.randint(80000, 100000)
+            timeout = random.randint(120000, 180000)
             await page.goto(url_pagina, wait_until="networkidle", timeout=timeout)
             
             try:
@@ -164,7 +304,7 @@ async def scrape_busqueda_inicial(page, dispositivo: str, condicion: str) -> Lis
                     await page.wait_for_selector("div.poly-card", timeout=10000)
                 except:
                     print(f"    ❌ No se encontraron elementos de productos")
-                    return []
+                    break
             
             productos_pagina = await extraer_productos_pagina(page, condicion, dispositivo)
             
@@ -178,10 +318,12 @@ async def scrape_busqueda_inicial(page, dispositivo: str, condicion: str) -> Lis
             if not siguiente_btn:
                 break
             
+            # Delay aleatorio entre páginas
+            await asyncio.sleep(random.uniform(3.0, 6.0))
             pagina_actual += 1
             
         except Exception as e:
-            print(f"    ⚠️ Error en página {pagina_actual}: {str(e)}")
+            print(f"    ❌ Error en página {pagina_actual}: {str(e)}")
             break
     
     return productos
@@ -249,18 +391,21 @@ async def extraer_detalles_producto(page, producto: Dict, fecha_scraping: str) -
     
     producto['id_producto'] = id_producto
     producto['fecha_scraping'] = fecha_scraping
-    producto['es_variacion'] = False
     
     try:
-        timeout = random.randint(80000, 100000)
+        timeout = random.randint(120000, 180000)
         await page.goto(url, wait_until="networkidle", timeout=timeout)
+        
+        # Extraer precios actualizados
+        precios = await extraer_precios_producto(page)
+        producto.update(precios)
         
         # Buscar botón de características
         boton_caracteristicas = await page.query_selector('button[data-testid="action-collapsable-target"]')
         
         if boton_caracteristicas:
             await boton_caracteristicas.click()
-            await asyncio.sleep(random.uniform(1.5, 3.5))
+            await asyncio.sleep(random.uniform(3.0, 6.0))
             
             tabla_memoria = await page.query_selector('div.ui-vpp-striped-specs__table')
             
@@ -276,96 +421,122 @@ async def extraer_detalles_producto(page, producto: Dict, fecha_scraping: str) -
     
     return producto
 
-async def extraer_variaciones_producto(page, producto: Dict, fecha_scraping: str) -> List[Dict]:
+async def recolectar_variaciones_producto(page, producto: Dict, fecha_scraping: str, variaciones_recolectadas: set) -> List[Dict]:
     """
-    PASO 3: Extraer variaciones del producto
+    PASO 3: Extraer variaciones del producto (sin procesarlas)
     """
     variaciones = []
     url = producto['url']
-    
     try:
-        # Buscar contenedor de variaciones
+        await asyncio.sleep(3.0)
         contenedor_variaciones = await page.query_selector('div.ui-pdp-variations')
-        
         if not contenedor_variaciones:
+            print(f"    ⚠️ No se encontró contenedor de variaciones")
             return []
-        
-        pickers = await contenedor_variaciones.query_selector_all('div.ui-pdp-variations__picker')
-        
-        if not pickers:
-            return []
-        
+        enlaces = await contenedor_variaciones.query_selector_all('a[href*="/p/MCO"]')
+        if not enlaces:
+            enlaces = await contenedor_variaciones.query_selector_all('a[href*=MCO]')
+        print(f"    🔍 Encontrados {len(enlaces)} enlaces de variaciones")
         urls_variaciones = set()
-        
-        for picker in pickers:
-            enlaces = await picker.query_selector_all('a[href*="/p/MCO"]')
-            
-            for enlace in enlaces:
-                href = await enlace.get_attribute("href")
-                if href and "MCO" in href:
-                    if href.startswith("/"):
-                        href = f"https://www.mercadolibre.com.co{href}"
-                    urls_variaciones.add(href)
-        
-        # Visitar cada variación
+        for enlace in enlaces:
+            href = await enlace.get_attribute("href")
+            if href and "MCO" in href:
+                if href.startswith("/"):
+                    href = f"https://www.mercadolibre.com.co{href}"
+                urls_variaciones.add(href)
+                print(f"    🔗 URL variación: {href}")
+        # Crear objetos de variación SOLO con la URL (sin filtrar por ID)
         for url_variacion in urls_variaciones:
-            try:
-                await page.goto(url_variacion, wait_until="networkidle", timeout=60000)
-                await asyncio.sleep(random.uniform(1.0, 2.5))
-                
-                datos_variacion = await extraer_datos_variacion(page, producto, fecha_scraping, url_variacion)
-                variaciones.append(datos_variacion)
-                
-            except Exception as e:
-                print(f"    ❌ Error procesando variación: {str(e)}")
-                continue
-        
+            variacion = {
+                'url': url_variacion,
+                'fecha_scraping': fecha_scraping,
+                'es_variacion': True
+            }
+            variaciones.append(variacion)
+        print(f"    ✅ Recolectadas {len(variaciones)} variaciones válidas")
     except Exception as e:
-        print(f"    ❌ Error extrayendo variaciones: {str(e)}")
-    
+        print(f"    ❌ Error recolectando variaciones: {str(e)}")
     return variaciones
 
-async def extraer_datos_variacion(page, producto_original: Dict, fecha_scraping: str, url_variacion: str) -> Dict:
-    """Extrae los datos de una variación específica"""
-    datos_variacion = producto_original.copy()
-    datos_variacion['url'] = url_variacion  # URL de la variación
-    datos_variacion['url_variacion'] = url_variacion
-    datos_variacion['fecha_scraping'] = fecha_scraping
-    datos_variacion['es_variacion'] = True
+async def procesar_variacion_completa(page, variacion: Dict, fecha_scraping: str) -> Dict:
+    """
+    Procesa una variación completa, extrayendo todos los datos desde cero
+    """
+    url = variacion['url']
+    id_variacion = extraer_id_producto(url)
     
-    # Extraer ID del producto de la URL de la variación
-    id_variacion = extraer_id_producto(url_variacion)
-    datos_variacion['id_producto'] = id_variacion
+    print(f"    🔗 URL de la variación: {url}")
     
     try:
-        titulo_element = await page.query_selector('h1.ui-pdp-title')
-        if titulo_element:
-            datos_variacion['nombre'] = await titulo_element.inner_text()
+        timeout = random.randint(120000, 180000)
+        await page.goto(url, wait_until="networkidle", timeout=timeout)
         
-        precio_element = await page.query_selector('span.andes-money-amount__fraction')
-        if precio_element:
-            precio_texto = await precio_element.inner_text()
-            precio_limpio = re.sub(r'[^\d]', '', precio_texto)
-            datos_variacion['precio'] = int(precio_limpio) if precio_limpio else None
+        # Extraer datos básicos del producto
+        nombre_element = await page.query_selector('h1.ui-pdp-title')
+        if nombre_element:
+            variacion['nombre'] = await nombre_element.inner_text()
         
-        datos_memoria = await extraer_datos_memoria(page)
-        datos_variacion.update(datos_memoria)
+        # Extraer precios actualizados
+        precios = await extraer_precios_producto(page)
+        variacion.update(precios)
         
-        datos_vendedor = await extraer_datos_vendedor(page)
-        datos_variacion.update(datos_vendedor)
+        # Extraer calificación si existe
+        calificacion_element = await page.query_selector('span.ui-pdp-review__rating')
+        if calificacion_element:
+            calificacion_texto = await calificacion_element.inner_text()
+            match = re.search(r'(\d+[,.]?\d*)', calificacion_texto)
+            if match:
+                calificacion = match.group(1).replace(',', '.')
+                variacion['calificacion'] = float(calificacion)
+        
+        # Establecer condición por defecto como "nuevo"
+        variacion['condicion'] = "nuevo"
+        # Extraer dispositivo del nombre si es posible
+        if 'nombre' in variacion and variacion['nombre']:
+            nombre = variacion['nombre'].lower()
+            if 's24ultra' in nombre:
+                variacion['dispositivo'] = "samsung galaxy s24 ultra 5g"
+            elif 's24e' in nombre:
+                variacion['dispositivo'] = "samsung galaxy s24"
+            else:
+                variacion['dispositivo'] = "samsung galaxy s24 5g defecto"
+        
+        # Buscar botón de características
+        boton_caracteristicas = await page.query_selector('button[data-testid="action-collapsable-target"]')
+        
+        if boton_caracteristicas:
+            await boton_caracteristicas.click()
+            await asyncio.sleep(random.uniform(3.0, 6.0))
+            
+            tabla_memoria = await page.query_selector('div.ui-vpp-striped-specs__table')
+            
+            if tabla_memoria:
+                datos_memoria = await extraer_datos_memoria(page)
+                variacion.update(datos_memoria)
+            
+            datos_vendedor = await extraer_datos_vendedor(page)
+            variacion.update(datos_vendedor)
+        
+        # Asegurar que tenga el ID del producto
+        variacion['id_producto'] = id_variacion
+        
+        return variacion
         
     except Exception as e:
-        print(f"    ⚠️ Error extrayendo datos de variación: {str(e)}")
-    
-    return datos_variacion
+        print(f"    ❌ Error procesando variación completa: {str(e)}")
+        variacion['fecha_scraping'] = fecha_scraping
+        variacion['condicion'] = "nuevo"  # Por defecto
+        variacion['dispositivo'] = "samsung galaxy s24 5g"  # Por defecto
+        return variacion
 
 async def extraer_datos_memoria(page) -> Dict:
-    """Extrae los datos de memoria de la tabla"""
+    """Extrae los datos de memoria y color de la tabla"""
     datos = {
         'memoria_interna': None,
         'memoria_ram': None,
         'capacidad_maxima_tarjeta': None,
-        'ranura_tarjeta_memoria': None
+        'ranura_tarjeta_memoria': None,
+        'color': None
     }
     
     try:
@@ -388,6 +559,8 @@ async def extraer_datos_memoria(page) -> Dict:
                         datos['capacidad_maxima_tarjeta'] = valor
                     elif "Con ranura para tarjeta de memoria" in encabezado:
                         datos['ranura_tarjeta_memoria'] = valor
+                    elif "Color" in encabezado:
+                        datos['color'] = valor
                         
     except Exception as e:
         print(f"    ⚠️ Error extrayendo datos de memoria: {str(e)}")
