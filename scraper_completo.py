@@ -144,7 +144,52 @@ async def scrape_completo():
                 '--disable-web-security',
                 '--disable-features=VizDisplayCompositor',
                 '--memory-pressure-off',
-                '--max_old_space_size=4096'
+                '--max_old_space_size=2048',  # Reducido de 4096 a 2048
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-features=TranslateUI',
+                '--disable-ipc-flooding-protection',
+                '--disable-extensions',
+                '--disable-plugins',
+                '--disable-images',  # Deshabilitar imágenes para ahorrar memoria
+                '--disable-javascript',  # Deshabilitar JS si no es necesario
+                '--disable-css',
+                '--disable-fonts',
+                '--disable-default-apps',
+                '--disable-sync',
+                '--disable-translate',
+                '--disable-logging',
+                '--disable-dev-tools',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-background-networking',
+                '--disable-default-apps',
+                '--disable-extensions-except',
+                '--disable-plugins-discovery',
+                '--disable-hang-monitor',
+                '--disable-prompt-on-repost',
+                '--disable-domain-reliability',
+                '--disable-features=AudioServiceOutOfProcess',
+                '--disable-features=VizDisplayCompositor',
+                '--disable-features=TranslateUI',
+                '--disable-features=BlinkGenPropertyTrees',
+                '--disable-features=CalculateNativeWinOcclusion',
+                '--disable-features=GlobalMediaControls',
+                '--disable-features=MediaRouter',
+                '--disable-features=OptimizationHints',
+                '--disable-features=PasswordGeneration',
+                '--disable-features=PreloadMediaEngagementData',
+                '--disable-features=Translate',
+                '--disable-features=WebUIDarkMode',
+                '--disable-features=WebUIDarkModeV2',
+                '--disable-features=WebUIDarkModeV3',
+                '--disable-features=WebUIDarkModeV4',
+                '--disable-features=WebUIDarkModeV5',
+                '--disable-features=WebUIDarkModeV6',
+                '--disable-features=WebUIDarkModeV7',
+                '--disable-features=WebUIDarkModeV8',
+                '--disable-features=WebUIDarkModeV9',
+                '--disable-features=WebUIDarkModeV10'
             ]
         )
         
@@ -158,69 +203,133 @@ async def scrape_completo():
                 
                 # Delay muy conservador antes de cada búsqueda (modelo) - solo después de la primera
                 if busqueda_actual > 1:
-                    await asyncio.sleep(random.uniform(600, 610))  # 10 minutos entre modelos
+                    await asyncio.sleep(random.uniform(200, 360))  # 10 minutos entre modelos
                 
-                try:
-                    # PASO 1: Búsqueda inicial
-                    productos_busqueda = await scrape_busqueda_inicial(page, dispositivo, condicion)
-                    
-                    if productos_busqueda:
-                        print(f"✅ Encontrados {len(productos_busqueda)} productos en búsqueda inicial")
+                # Reintentos para cada búsqueda
+                for intento_busqueda in range(3):
+                    try:
+                        # PASO 1: Búsqueda inicial
+                        productos_busqueda = await scrape_busqueda_inicial(page, dispositivo, condicion)
                         
-                        # PASO 2: Extraer detalles de cada producto y recolectar variaciones
-                        for i, producto in enumerate(productos_busqueda):
-                            print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
-                            print(f"    🔗 URL: {producto['url']}")
+                        if productos_busqueda:
+                            print(f"✅ Encontrados {len(productos_busqueda)} productos en búsqueda inicial")
                             
-                            # Verificar si ya procesamos este producto - COMENTADO TEMPORALMENTE
-                            # id_producto = extraer_id_producto(producto['url'])
-                            # if id_producto in productos_procesados:
-                            #     print(f"    ⚠️ Producto ya procesado, saltando")
-                            #     continue
-                            
-                            # productos_procesados.add(id_producto)
-                            
-                            # Delay entre productos individuales
-                            await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos entre productos
-                            
-                            try:
-                                # PASO 3lectar variaciones ANTES de extraer detalles
-                                variaciones_producto = await recolectar_variaciones_producto(page, producto, fecha_scraping, variaciones_recolectadas)
-                                if variaciones_producto:
-                                    print(f"    ✅ Recolectadas {len(variaciones_producto)} variaciones")
-                                    todas_variaciones.extend(variaciones_producto)
-                                else:
-                                    print(f"    ⚠️ No se encontraron variaciones")
+                            # PASO 2: Extraer detalles de cada producto y recolectar variaciones
+                            for i, producto in enumerate(productos_busqueda):
+                                print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
+                                print(f"    🔗 URL: {producto['url']}")
                                 
-                                # Extraer detalles del producto
-                                producto_con_detalles = await extraer_detalles_producto(page, producto, fecha_scraping)
-                                todos_productos.append(producto_con_detalles)
+                                # Verificar si ya procesamos este producto - COMENTADO TEMPORALMENTE
+                                # id_producto = extraer_id_producto(producto['url'])
+                                # if id_producto in productos_procesados:
+                                #     print(f"    ⚠️ Producto ya procesado, saltando")
+                                #     continue
                                 
-                                # Delay después de procesar cada producto
-                                await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos después de cada producto
+                                # productos_procesados.add(id_producto)
                                 
-                                # Limpieza de memoria después de cada producto
+                                # Delay entre productos individuales
+                                await asyncio.sleep(random.uniform(20, 50))  # 1-1.5 minutos entre productos
+                                
                                 try:
-                                    await page.evaluate("window.gc && window.gc()")
-                                except:
-                                    pass
-                                
-                            except Exception as e:
-                                print(f"    ❌ Error procesando producto: {str(e)}")
-                                producto['fecha_scraping'] = fecha_scraping
-                                todos_productos.append(producto)
-                                continue
-                    else:
-                        print(f"⚠️ No se encontraron productos para {dispositivo} ({condicion})")
-                    
-                    # Delay entre búsquedas
-                    if busqueda_actual < total_busquedas:
-                        print(f"⏳ Esperando {DELAY_ENTRE_BUSQUEDAS} segundos...")
-                        await asyncio.sleep(DELAY_ENTRE_BUSQUEDAS)
-                    
-                except Exception as e:
-                    print(f"❌ Error en búsqueda {dispositivo} ({condicion}): {str(e)}")
-                    continue
+                                    # PASO 3: Recolectar variaciones ANTES de extraer detalles
+                                    variaciones_producto = await recolectar_variaciones_producto(page, producto, fecha_scraping, variaciones_recolectadas)
+                                    if variaciones_producto:
+                                        print(f"    ✅ Recolectadas {len(variaciones_producto)} variaciones")
+                                        todas_variaciones.extend(variaciones_producto)
+                                    else:
+                                        print(f"    ⚠️ No se encontraron variaciones")
+                                    
+                                    # Extraer detalles del producto
+                                    producto_con_detalles = await extraer_detalles_producto(page, producto, fecha_scraping)
+                                    todos_productos.append(producto_con_detalles)
+                                    
+                                    # Delay después de procesar cada producto
+                                    # await asyncio.sleep(random.uniform(30, 80))  # 1-1.5 minutos después de cada producto
+                                    
+                                    # Limpieza de memoria después de cada producto
+                                    try:
+                                        await page.evaluate("window.gc && window.gc()")
+                                    except:
+                                        pass
+                                    
+                                except Exception as e:
+                                    print(f"    ❌ Error procesando producto: {str(e)}")
+                                    producto['fecha_scraping'] = fecha_scraping
+                                    todos_productos.append(producto)
+                                    continue
+                        else:
+                            print(f"⚠️ No se encontraron productos para {dispositivo} ({condicion})")
+                        
+                        # Delay entre búsquedas
+                        if busqueda_actual < total_busquedas:
+                            print(f"⏳ Esperando {DELAY_ENTRE_BUSQUEDAS} segundos...")
+                            await asyncio.sleep(DELAY_ENTRE_BUSQUEDAS)
+                        
+                        # Si llegamos aquí, la búsqueda fue exitosa
+                        break
+                        
+                    except Exception as e:
+                        print(f"❌ Error en búsqueda {dispositivo} ({condicion}) - intento {intento_busqueda + 1}/3: {str(e)}")
+                        if intento_busqueda == 2:  # Último intento
+                            print(f"❌ Error en búsqueda {dispositivo} ({condicion}): {str(e)}")
+                            continue
+                        else:
+                            # Reiniciar navegador en caso de error
+                            try:
+                                await browser.close()
+                            except:
+                                pass
+                            browser = await p.chromium.launch(
+                                headless=True,
+                                args=[
+                                    f'--user-agent={user_agent}',
+                                    f'--window-size={viewport_width},{viewport_height}',
+                                    '--disable-dev-shm-usage',
+                                    '--no-sandbox',
+                                    '--disable-setuid-sandbox',
+                                    '--disable-gpu',
+                                    '--disable-web-security',
+                                    '--disable-features=VizDisplayCompositor',
+                                    '--memory-pressure-off',
+                                    '--max_old_space_size=2048',  # Reducido de 4096 a 2048
+                                    '--disable-background-timer-throttling',
+                                    '--disable-backgrounding-occluded-windows',
+                                    '--disable-renderer-backgrounding',
+                                    '--disable-features=TranslateUI',
+                                    '--disable-ipc-flooding-protection',
+                                    '--disable-extensions',
+                                    '--disable-plugins',
+                                    '--disable-images',
+                                    '--disable-javascript',
+                                    '--disable-css',
+                                    '--disable-fonts',
+                                    '--disable-default-apps',
+                                    '--disable-sync',
+                                    '--disable-translate',
+                                    '--disable-logging',
+                                    '--disable-dev-tools',
+                                    '--disable-component-extensions-with-background-pages',
+                                    '--disable-background-networking',
+                                    '--disable-extensions-except',
+                                    '--disable-plugins-discovery',
+                                    '--disable-hang-monitor',
+                                    '--disable-prompt-on-repost',
+                                    '--disable-domain-reliability',
+                                    '--disable-features=AudioServiceOutOfProcess',
+                                    '--disable-features=BlinkGenPropertyTrees',
+                                    '--disable-features=CalculateNativeWinOcclusion',
+                                    '--disable-features=GlobalMediaControls',
+                                    '--disable-features=MediaRouter',
+                                    '--disable-features=OptimizationHints',
+                                    '--disable-features=PasswordGeneration',
+                                    '--disable-features=PreloadMediaEngagementData',
+                                    '--disable-features=Translate',
+                                    '--disable-features=WebUIDarkMode'
+                                ]
+                            )
+                            page = await browser.new_page()
+                            await page.set_viewport_size({"width": viewport_width, "height": viewport_height})
+                            await asyncio.sleep(5)  # Esperar antes de reintentar
         
         # PASO4Procesar todas las variaciones recolectadas
         if todas_variaciones:
@@ -468,8 +577,12 @@ async def procesar_variacion_completa(page, variacion: Dict, fecha_scraping: str
     print(f"    🔗 URL de la variación: {url}")
     
     try:
-        timeout = random.randint(120000, 180000)
-        await page.goto(url, wait_until="networkidle", timeout=timeout)
+        # Reducir timeout y usar domcontentloaded en lugar de networkidle
+        timeout = random.randint(60000, 90000)  # Reducido de 120-180s a 60-90s
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        
+        # Espera adicional más corta
+        await asyncio.sleep(random.uniform(2.0, 4.0))
         
         # Extraer datos básicos del producto
         nombre_element = await page.query_selector('h1.ui-pdp-title')
@@ -501,21 +614,24 @@ async def procesar_variacion_completa(page, variacion: Dict, fecha_scraping: str
             else:
                 variacion['dispositivo'] = "samsung galaxy s24 5g defecto"
         
-        # Buscar botón de características
-        boton_caracteristicas = await page.query_selector('button[data-testid="action-collapsable-target"]')
-        
-        if boton_caracteristicas:
-            await boton_caracteristicas.click()
-            await asyncio.sleep(random.uniform(3.0, 6.0))
+        # Buscar botón de características con timeout más corto
+        try:
+            boton_caracteristicas = await page.query_selector('button[data-testid="action-collapsable-target"]')
             
-            tabla_memoria = await page.query_selector('div.ui-vpp-striped-specs__table')
-            
-            if tabla_memoria:
-                datos_memoria = await extraer_datos_memoria(page)
-                variacion.update(datos_memoria)
-            
-            datos_vendedor = await extraer_datos_vendedor(page)
-            variacion.update(datos_vendedor)
+            if boton_caracteristicas:
+                await boton_caracteristicas.click()
+                await asyncio.sleep(random.uniform(2.0, 4.0))  # Reducido de 3-6s a 2-4s
+                
+                tabla_memoria = await page.query_selector('div.ui-vpp-striped-specs__table')
+                
+                if tabla_memoria:
+                    datos_memoria = await extraer_datos_memoria(page)
+                    variacion.update(datos_memoria)
+                
+                datos_vendedor = await extraer_datos_vendedor(page)
+                variacion.update(datos_vendedor)
+        except Exception as e:
+            print(f"    ⚠️ Error extrayendo características: {str(e)}")
         
         # Asegurar que tenga el ID del producto
         variacion['id_producto'] = id_variacion

@@ -7,9 +7,6 @@ DISPOSITIVOS = [
     "samsung z flip 6",
     "samsung galaxy a56",
     "samsung galaxy a16",
-    "samsung galaxy s25",
-    "samsung galaxy s24",
-    "samsung z fold 6"
 ]
 
 # Condiciones a buscar (nuevo y usado)
