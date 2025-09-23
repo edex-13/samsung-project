@@ -13,7 +13,7 @@ DISPOSITIVOS = [
     "samsung galaxy a56",
     "samsung galaxy a16"
 ]
-MAX_PAGINAS = 2  # Cambiado de 1 a 2 páginas
+MAX_PAGINAS = 1  # Cambiado de 1 a 2 páginas
 VIEWPORT_WIDTH = 1920
 VIEWPORT_HEIGHT = 1080
 TIMEOUT_PRODUCTOS = 7000   # Agresivo pero estable: equilibrio perfecto
