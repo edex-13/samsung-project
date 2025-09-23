@@ -319,10 +319,16 @@ def crear_archivo_limpio(df_validos, nombre_archivo):
     """
     Crea un archivo limpio con solo las columnas de datos y características extraídas
     """
+    # Determinar directorio data (Docker o local)
+    if os.path.exists('/app'):
+        data_dir = '/app/data'
+    else:
+        data_dir = 'data'
+    
     # Crear carpeta data si no existe
-    if not os.path.exists('data'):
-        os.makedirs('data')
-        print("   📁 Carpeta 'data' creada")
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+        print(f"   📁 Carpeta '{data_dir}' creada")
     
     # Columnas que queremos mantener (datos originales) - SIN la columna 'modelo'
     columnas_datos = [
@@ -471,11 +477,27 @@ def main():
     print(f"📋 Modelos válidos: {len(MODELOS_VALIDOS)}")
     print(f"🚫 Palabras no-celular detectadas: {len(PALABRAS_NO_CELULAR)}")
     
-    # Buscar archivos Excel
+    # Buscar archivos Excel (en directorio actual o en /app/output si es Docker)
     archivos_excel = []
-    for archivo in os.listdir('.'):
-        if archivo.endswith('.xlsx') and not archivo.endswith('_limpio.xlsx') and not archivo.endswith('_invalidos.xlsx'):
-            archivos_excel.append(archivo)
+    
+    # Determinar directorio de búsqueda
+    if os.path.exists('/app/output'):
+        directorios_busqueda = ['/app/output', '.']
+        print("🐳 Detectado entorno Docker, buscando archivos en /app/output y directorio actual")
+    else:
+        directorios_busqueda = ['.']
+        print("💻 Entorno local, buscando archivos en directorio actual")
+    
+    for directorio in directorios_busqueda:
+        try:
+            for archivo in os.listdir(directorio):
+                if archivo.endswith('.xlsx') and not archivo.endswith('_limpio.xlsx') and not archivo.endswith('_invalidos.xlsx'):
+                    if directorio == '.':
+                        archivos_excel.append(archivo)
+                    else:
+                        archivos_excel.append(os.path.join(directorio, archivo))
+        except FileNotFoundError:
+            continue
     
     if not archivos_excel:
         print("❌ No se encontraron archivos Excel para analizar")

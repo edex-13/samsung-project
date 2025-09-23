@@ -16,8 +16,8 @@ DISPOSITIVOS = [
 MAX_PAGINAS = 1
 VIEWPORT_WIDTH = 1920
 VIEWPORT_HEIGHT = 1080
-TIMEOUT_PRODUCTOS = 60000# Aumentado de150 a300
-DELAY_ENTRE_BUSQUEDAS = 15
+TIMEOUT_PRODUCTOS = 5000   # Súper agresivo: reducido de 10000 a 5000
+DELAY_ENTRE_BUSQUEDAS = 1   # Súper agresivo: reducido de 3 a 1
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
@@ -43,11 +43,11 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
         # Reintentos para cada página
         for intento in range(3):
             try:
-                timeout = random.randint(40000, 45000) # Aumentado el timeout
+                timeout = random.randint(3000, 5000)   # Súper agresivo: reducido de (8000,10000) a (3000,5000)
                 print(f"🔄 Intentando cargar página {pagina_actual} (intento {intento + 1}/3)")
                 await page.goto(url_pagina, wait_until="domcontentloaded", timeout=timeout)
                 # Espera adicional para asegurar carga de JS
-                await asyncio.sleep(6)  # Aumentado de 4 a 6 segundos
+                await asyncio.sleep(0.2)  # Súper agresivo: reducido de 1 a 0.2
                 
                 try:
                     await page.wait_for_selector("a[data-pod]", timeout=TIMEOUT_PRODUCTOS)
@@ -63,7 +63,7 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
                         return productos
                     else:
                         print(f"    ⚠️ Intento {intento + 1} fallido, reintentando...")
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(0.1)  # Súper agresivo: reducido de 0.5 a 0.1
                         continue
                         
             except Exception as e:
@@ -72,7 +72,7 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
                     return productos
                 else:
                     print(f"    ⚠️ Error en intento {intento + 1}: {str(e)}, reintentando...")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(0.5)  # Súper agresivo: reducido de 2 a 0.5
                     continue
         
         productos_pagina = await extraer_productos_pagina_falabella(page, dispositivo)
@@ -86,7 +86,7 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
         productos.extend(productos_pagina)
         print(f"    📊 Encontrados {len(productos_pagina)} productos en página {pagina_actual}")
         pagina_actual += 1
-        await asyncio.sleep(random.uniform(5, 7))  # Aumentado el delay
+        await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
     return productos
 
 async def extraer_productos_pagina_falabella(page, dispositivo: str):
@@ -146,11 +146,11 @@ async def extraer_detalles_producto_falabella(page, producto: dict, fecha_scrapi
     for intento in range(3):
         try:
             print(f"🔄 Cargando producto (intento {intento + 1}/3)")
-            timeout = random.randint(40000, 45000)  # Timeout más corto para productos individuales
+            timeout = random.randint(3000, 5000)   # Súper agresivo: reducido de (8000,10000) a (3000,5000)
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
             
             # Espera adicional para que cargue el contenido
-            await asyncio.sleep(3)
+            await asyncio.sleep(0.5)  # Reducido aún más de 1.5 a 0.5
             
             # Extraer datos con timeouts individuales
             try:
@@ -192,7 +192,7 @@ async def extraer_detalles_producto_falabella(page, producto: dict, fecha_scrapi
                 })
             else:
                 print(f"⚠️ Error en intento {intento + 1}: {str(e)}, reintentando...")
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.5)  # Súper agresivo: reducido de 2 a 0.5
                 continue
     
     return producto
@@ -254,7 +254,7 @@ async def extraer_especificaciones_falabella(page):
         boton_ver_mas = await page.query_selector('button#swatch-collapsed-id')
         if boton_ver_mas:
             await boton_ver_mas.click()
-            await asyncio.sleep(random.uniform(5, 7))
+            await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
         filas = await page.query_selector_all('table.specification-table tr')
         for fila in filas:
             try:
@@ -308,7 +308,7 @@ async def scrape_falabella():
             exito = False
             for dispositivo in DISPOSITIVOS:
                 print(f"\n🔍 Búsqueda: {dispositivo}")
-                await asyncio.sleep(random.uniform(5, 7))
+                await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
                 try:
                     productos_busqueda = await scrape_busqueda_inicial_falabella(page, dispositivo)
                     if productos_busqueda:
@@ -317,11 +317,11 @@ async def scrape_falabella():
                         for i, producto in enumerate(productos_busqueda):
                             print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
                             print(f"    🔗 URL: {producto['url']}")
-                            await asyncio.sleep(random.uniform(5, 7))
+                            await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
                             try:
                                 producto_con_detalles = await extraer_detalles_producto_falabella(page, producto, fecha_scraping)
                                 todos_productos.append(producto_con_detalles)
-                                await asyncio.sleep(random.uniform(5, 7))
+                                await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
                             except Exception as e:
                                 print(f"    ❌ Error procesando producto: {str(e)}")
                                 producto['fecha_scraping'] = fecha_scraping
@@ -338,22 +338,69 @@ async def scrape_falabella():
             if exito:
                 break
 
+    print(f"\n[INFO] Finalizando scraper. Productos encontrados: {len(todos_productos)}")
+    
     if todos_productos:
-        df_completo = pd.DataFrame(todos_productos)
         try:
-            df_completo.to_excel("resultados_falabella.xlsx", index=False)
-            print(f"\n🎉 ¡Scraping Falabella finalizado!")
-            print(f"📊 Total de productos: {len(todos_productos)}")
-            print(f"💾 Archivo guardado: resultados_falabella.xlsx")
-        except PermissionError:
+            print(f"[INFO] Creando DataFrame con {len(todos_productos)} productos...")
+            df_completo = pd.DataFrame(todos_productos)
+            print(f"[INFO] DataFrame creado exitosamente. Columnas: {list(df_completo.columns)}")
+            
+            # Intentar guardar con nombre por defecto (en directorio montado si es Docker)
+            import os
+            if os.path.exists('/app/output'):
+                nombre_archivo = "/app/output/resultados_falabella.xlsx"
+            else:
+                nombre_archivo = "resultados_falabella.xlsx"
+            print(f"[INFO] Intentando guardar archivo: {nombre_archivo}")
+            df_completo.to_excel(nombre_archivo, index=False)
+            
+            # Verificar que el archivo se creó
+            import os
+            if os.path.exists(nombre_archivo):
+                tamaño = os.path.getsize(nombre_archivo)
+                print(f"\n🎉 ¡Scraping Falabella finalizado!")
+                print(f"📊 Total de productos: {len(todos_productos)}")
+                print(f"💾 Archivo guardado: {nombre_archivo} ({tamaño} bytes)")
+                print(f"[INFO] Ruta completa: {os.path.abspath(nombre_archivo)}")
+            else:
+                print(f"[ERROR] El archivo no se pudo crear: {nombre_archivo}")
+                
+        except PermissionError as e:
+            print(f"[WARN] Error de permisos: {e}")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            nuevo_archivo = f"resultados_falabella_{timestamp}.xlsx"
+            if os.path.exists('/app/output'):
+                nuevo_archivo = f"/app/output/resultados_falabella_{timestamp}.xlsx"
+            else:
+                nuevo_archivo = f"resultados_falabella_{timestamp}.xlsx"
+            print(f"[INFO] Intentando con nuevo nombre: {nuevo_archivo}")
             df_completo.to_excel(nuevo_archivo, index=False)
-            print(f"\n🎉 ¡Scraping Falabella finalizado!")
-            print(f"📊 Total de productos: {len(todos_productos)}")
-            print(f"💾 Archivo guardado: {nuevo_archivo}")
+            
+            import os
+            if os.path.exists(nuevo_archivo):
+                tamaño = os.path.getsize(nuevo_archivo)
+                print(f"\n🎉 ¡Scraping Falabella finalizado!")
+                print(f"📊 Total de productos: {len(todos_productos)}")
+                print(f"💾 Archivo guardado: {nuevo_archivo} ({tamaño} bytes)")
+                print(f"[INFO] Ruta completa: {os.path.abspath(nuevo_archivo)}")
+            else:
+                print(f"[ERROR] El archivo no se pudo crear: {nuevo_archivo}")
+                
+        except Exception as e:
+            print(f"[ERROR] Error inesperado guardando archivo: {e}")
+            print(f"[INFO] Tipo de error: {type(e)}")
+            # Guardar como CSV alternativo
+            try:
+                if os.path.exists('/app/output'):
+                    nombre_csv = f"/app/output/resultados_falabella_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                else:
+                    nombre_csv = f"resultados_falabella_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                df_completo.to_csv(nombre_csv, index=False)
+                print(f"[INFO] Guardado como CSV alternativo: {nombre_csv}")
+            except:
+                print(f"[ERROR] Tampoco se pudo guardar como CSV")
     else:
-        print("❌ No se encontraron productos")
+        print("[ERROR] No se encontraron productos para guardar")
 
 if __name__ == "__main__":
     print("[INICIANDO] Scraper Falabella/Linio...")

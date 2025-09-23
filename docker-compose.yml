@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   scraper:
     build:
@@ -7,7 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: scraping-pipeline
     volumes:
-      # Montar directorio de salida para acceder a resultados desde el host
+      # Montar directorio principal para archivos Excel
+      - .:/app/output
+      # Montar directorios específicos para resultados
       - ./data:/app/data
       - ./backup:/app/backup
       - ./logs:/app/logs
@@ -18,15 +18,15 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
       - TZ=America/Bogota
-    # Recursos del contenedor
+    # Recursos del contenedor - aumentados para evitar que se mate
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '1.0'
+          memory: 5G
+          cpus: '2.0'
         reservations:
-          memory: 512M
-          cpus: '0.5'
+          memory: 1G
+          cpus: '1.0'
     # Red personalizada (opcional)
     networks:
       - scraping-network
