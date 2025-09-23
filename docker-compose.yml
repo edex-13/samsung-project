@@ -1,5 +1,5 @@
 services:
-  scraper:
+  scraper_v1:
     build:
       context: .
       dockerfile: Dockerfile
