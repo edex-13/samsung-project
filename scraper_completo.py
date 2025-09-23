@@ -65,6 +65,39 @@ def extraer_id_producto(url: str) -> Optional[str]:
     return None
 
 
+def guardar_archivo_dispositivo(dispositivo: str, productos: list, fecha_scraping: str, es_backup: bool = False):
+    """Guarda un archivo Excel por dispositivo"""
+    if not productos:
+        print(f"    ⚠️ No hay productos para guardar del dispositivo {dispositivo}")
+        return None
+    
+    try:
+        # Crear nombre de archivo seguro
+        nombre_dispositivo = dispositivo.replace(" ", "_").replace("/", "_").lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if es_backup:
+            # Para backups: crear carpeta backup si no existe
+            import os
+            if not os.path.exists("backup"):
+                os.makedirs("backup")
+            nombre_archivo = f"backup/backup_{nombre_dispositivo}_{timestamp}.xlsx"
+        else:
+            # Para archivos normales: carpeta principal
+            nombre_archivo = f"resultados_{nombre_dispositivo}_{timestamp}.xlsx"
+        
+        # Crear DataFrame y guardar
+        df = pd.DataFrame(productos)
+        df.to_excel(nombre_archivo, index=False)
+        
+        print(f"    💾 Archivo guardado: {nombre_archivo} ({len(productos)} productos)")
+        return nombre_archivo
+        
+    except Exception as e:
+        print(f"    ❌ Error guardando archivo para {dispositivo}: {str(e)}")
+        return None
+
+
 async def extraer_precios_producto(page) -> Dict:
     """
     Extrae precios del producto, manejando descuentos
@@ -121,8 +154,15 @@ async def scrape_completo():
     busqueda_actual = 0
     fecha_scraping = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # Diccionario para almacenar productos por dispositivo
+    productos_por_dispositivo = {}
+    for dispositivo in DISPOSITIVOS:
+        productos_por_dispositivo[dispositivo] = []
+    
     print(f"🚀 Iniciando scraper completo para {len(DISPOSITIVOS)} dispositivos y {len(CONDICIONES)} condiciones")
     print(f"📊 Total de búsquedas a realizar: {total_busquedas}")
+    print("🚀 MODO COMPLETO: Procesando todos los productos disponibles")
+    print("⏱️ Delays de 10-15 minutos entre modelos y condiciones")
     print("=" * 60)
     
     async with async_playwright() as p:
@@ -131,6 +171,12 @@ async def scrape_completo():
         viewport_height = random.randint(700, 1080)
         print(f"🖥️ User-Agent usado: {user_agent}")
         print(f"🖥️ Viewport: {viewport_width}x{viewport_height}")
+        
+        # Límites para controlar memoria y tiempo
+        MAX_PRODUCTOS_TOTAL = 15
+        MAX_VARIACIONES_TOTAL = 200
+        productos_procesados_count = 0
+        variaciones_procesadas_count = 0
         
         browser = await p.chromium.launch(
             headless=True,
@@ -197,13 +243,18 @@ async def scrape_completo():
         await page.set_viewport_size({"width": viewport_width, "height": viewport_height})
         
         for dispositivo in DISPOSITIVOS:
+            print(f"\n📱 PROCESANDO DISPOSITIVO: {dispositivo}")
+            print("=" * 50)
+            if busqueda_actual > 1:
+                    delay_minutos = random.uniform(7, 15)  # 10-15 minutos entre modelos
+                    print(f"⏳ Esperando {delay_minutos:.1f} minutos entre búsquedas...")
+                    await asyncio.sleep(delay_minutos * 60)  # Convertir a segundos
+                
             for condicion in CONDICIONES:
                 busqueda_actual += 1
                 print(f"\n🔍 Búsqueda {busqueda_actual}/{total_busquedas}: {dispositivo} - {condicion}")
                 
-                # Delay muy conservador antes de cada búsqueda (modelo) - solo después de la primera
-                if busqueda_actual > 1:
-                    await asyncio.sleep(random.uniform(200, 360))  # 10 minutos entre modelos
+                # Delay entre modelos y condiciones - MODO COMPLETO
                 
                 # Reintentos para cada búsqueda
                 for intento_busqueda in range(3):
@@ -216,7 +267,12 @@ async def scrape_completo():
                             
                             # PASO 2: Extraer detalles de cada producto y recolectar variaciones
                             for i, producto in enumerate(productos_busqueda):
-                                print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
+                                # Verificar límite de productos
+                                if productos_procesados_count >= MAX_PRODUCTOS_TOTAL:
+                                    print(f"  ⚠️ Límite de {MAX_PRODUCTOS_TOTAL} productos alcanzado, saltando productos restantes")
+                                    break
+                                
+                                print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)} ({productos_procesados_count + 1}/{MAX_PRODUCTOS_TOTAL}): {producto['nombre'][:50]}...")
                                 print(f"    🔗 URL: {producto['url']}")
                                 
                                 # Verificar si ya procesamos este producto - COMENTADO TEMPORALMENTE
@@ -227,8 +283,8 @@ async def scrape_completo():
                                 
                                 # productos_procesados.add(id_producto)
                                 
-                                # Delay entre productos individuales
-                                await asyncio.sleep(random.uniform(20, 50))  # 1-1.5 minutos entre productos
+                                # Delay entre productos individuales - MODO COMPLETO
+                                await asyncio.sleep(random.uniform(30, 60))  # 30-60 segundos entre productos
                                 
                                 try:
                                     # PASO 3: Recolectar variaciones ANTES de extraer detalles
@@ -242,6 +298,14 @@ async def scrape_completo():
                                     # Extraer detalles del producto
                                     producto_con_detalles = await extraer_detalles_producto(page, producto, fecha_scraping)
                                     todos_productos.append(producto_con_detalles)
+                                    productos_por_dispositivo[dispositivo].append(producto_con_detalles)
+                                    productos_procesados_count += 1
+                                    
+                                    print(f"    📊 Productos procesados: {productos_procesados_count}/{MAX_PRODUCTOS_TOTAL}")
+                                    
+                                    # Guardar archivo por dispositivo cada 5 productos (backup de seguridad)
+                                    if len(productos_por_dispositivo[dispositivo]) % 5 == 0:
+                                        guardar_archivo_dispositivo(dispositivo, productos_por_dispositivo[dispositivo], fecha_scraping, es_backup=True)
                                     
                                     # Delay después de procesar cada producto
                                     # await asyncio.sleep(random.uniform(30, 80))  # 1-1.5 minutos después de cada producto
@@ -256,6 +320,7 @@ async def scrape_completo():
                                     print(f"    ❌ Error procesando producto: {str(e)}")
                                     producto['fecha_scraping'] = fecha_scraping
                                     todos_productos.append(producto)
+                                    productos_procesados_count += 1
                                     continue
                         else:
                             print(f"⚠️ No se encontraron productos para {dispositivo} ({condicion})")
@@ -330,13 +395,30 @@ async def scrape_completo():
                             page = await browser.new_page()
                             await page.set_viewport_size({"width": viewport_width, "height": viewport_height})
                             await asyncio.sleep(5)  # Esperar antes de reintentar
+                productos_procesados_count = 0
+            # Guardar archivo del dispositivo al terminar todas sus condiciones
+            if productos_por_dispositivo[dispositivo]:
+                print(f"\n💾 Guardando archivo del dispositivo {dispositivo}...")
+                archivo_guardado = guardar_archivo_dispositivo(dispositivo, productos_por_dispositivo[dispositivo], fecha_scraping)
+                if archivo_guardado:
+                    print(f"✅ Dispositivo {dispositivo} completado y guardado: {archivo_guardado}")
+                else:
+                    print(f"❌ Error guardando dispositivo {dispositivo}")
+            else:
+                print(f"⚠️ No se encontraron productos para el dispositivo {dispositivo}")
+            
+            print(f"📱 DISPOSITIVO {dispositivo} COMPLETADO")
+            print("=" * 50)
         
         # PASO4Procesar todas las variaciones recolectadas
         if todas_variaciones:
             print(f"\n🔄 Procesando {len(todas_variaciones)} variaciones recolectadas...")
             
             for i, variacion in enumerate(todas_variaciones):
-                print(f"  🔍 Procesando variación {i+1}/{len(todas_variaciones)})             print(f🔗 URL: {variacion['url']}")
+                # Verificar límite de variaciones
+                
+                print(f"  🔍 Procesando variación {i+1}/{len(todas_variaciones)} ({variaciones_procesadas_count + 1}/{MAX_VARIACIONES_TOTAL})")
+                print(f"    🔗 URL: {variacion['url']}")
                 
                 # Verificar si ya procesamos esta variación - COMENTADO TEMPORALMENTE
                 # id_variacion = extraer_id_producto(variacion['url'])
@@ -346,15 +428,18 @@ async def scrape_completo():
                 
                 # productos_procesados.add(id_variacion)
                 
-                # Delay entre variaciones
+                # Delay entre variaciones - MODO COMPLETO
                 await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos entre variaciones
                 
                 try:
                     # Procesar variación como producto completamente independiente
                     variacion_procesada = await procesar_variacion_completa(page, variacion, fecha_scraping)
                     todos_productos.append(variacion_procesada)
+                    variaciones_procesadas_count += 1
                     
-                    # Delay después de procesar cada variación
+                    print(f"    📊 Variaciones procesadas: {variaciones_procesadas_count}/{MAX_VARIACIONES_TOTAL}")
+                    
+                    # Delay después de procesar cada variación - MODO COMPLETO
                     await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 minutos después de cada variación
                     
                 except Exception as e:
@@ -362,9 +447,20 @@ async def scrape_completo():
                     variacion['fecha_scraping'] = fecha_scraping
                     variacion['es_variacion'] = True
                     todos_productos.append(variacion)
+                    variaciones_procesadas_count += 1
                     continue
         
         await browser.close()
+    
+    # Guardar archivos por dispositivo
+    print(f"\n💾 Guardando archivos por dispositivo...")
+    archivos_guardados = []
+    
+    for dispositivo, productos_dispositivo in productos_por_dispositivo.items():
+        if productos_dispositivo:
+            archivo_guardado = guardar_archivo_dispositivo(dispositivo, productos_dispositivo, fecha_scraping)
+            if archivo_guardado:
+                archivos_guardados.append(archivo_guardado)
     
     # Guardar resultados completos
     if todos_productos:
@@ -373,14 +469,16 @@ async def scrape_completo():
             df_completo.to_excel("resultados_completos.xlsx", index=False)
             print(f"\n🎉 ¡Scraping completo finalizado!")
             print(f"📊 Total de productos (incluyendo variaciones): {len(todos_productos)}")
-            print(f"💾 Archivo guardado: resultados_completos.xlsx")
+            print(f"💾 Archivo completo guardado: resultados_completos.xlsx")
+            print(f"📁 Archivos por dispositivo guardados: {len(archivos_guardados)}")
         except PermissionError:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             nuevo_archivo = f"resultados_completos_{timestamp}.xlsx"
             df_completo.to_excel(nuevo_archivo, index=False)
             print(f"\n🎉 ¡Scraping completo finalizado!")
             print(f"📊 Total de productos (incluyendo variaciones): {len(todos_productos)}")
-            print(f"💾 Archivo guardado: {nuevo_archivo}")
+            print(f"💾 Archivo completo guardado: {nuevo_archivo}")
+            print(f"📁 Archivos por dispositivo guardados: {len(archivos_guardados)}")
     else:
         print("❌ No se encontraron productos")
 
@@ -403,7 +501,7 @@ async def scrape_busqueda_inicial(page, dispositivo: str, condicion: str) -> Lis
             url_pagina = f"{url}_Desde_{(pagina_actual-1)*50+1}"
         
         try:
-            timeout = random.randint(120000, 180000)
+            timeout = random.randint(60000, 120000)  # Aumentado a 1-2 minutos
             await page.goto(url_pagina, wait_until="networkidle", timeout=timeout)
             
             try:
@@ -427,8 +525,8 @@ async def scrape_busqueda_inicial(page, dispositivo: str, condicion: str) -> Lis
             if not siguiente_btn:
                 break
             
-            # Delay aleatorio entre páginas
-            await asyncio.sleep(random.uniform(3.0, 6.0))
+            # Delay aleatorio entre páginas - MODO COMPLETO
+            await asyncio.sleep(random.uniform(5.0, 10.0))
             pagina_actual += 1
             
         except Exception as e:
@@ -502,7 +600,7 @@ async def extraer_detalles_producto(page, producto: Dict, fecha_scraping: str) -
     producto['fecha_scraping'] = fecha_scraping
     
     try:
-        timeout = random.randint(120000, 180000)
+        timeout = random.randint(60000, 120000)  # Aumentado a 1-2 minutos
         await page.goto(url, wait_until="networkidle", timeout=timeout)
         
         # Extraer precios actualizados
@@ -514,7 +612,7 @@ async def extraer_detalles_producto(page, producto: Dict, fecha_scraping: str) -
         
         if boton_caracteristicas:
             await boton_caracteristicas.click()
-            await asyncio.sleep(random.uniform(3.0, 6.0))
+            await asyncio.sleep(random.uniform(3.0, 6.0))  # Aumentado para modo completo
             
             tabla_memoria = await page.query_selector('div.ui-vpp-striped-specs__table')
             
@@ -546,6 +644,10 @@ async def recolectar_variaciones_producto(page, producto: Dict, fecha_scraping: 
         if not enlaces:
             enlaces = await contenedor_variaciones.query_selector_all('a[href*=MCO]')
         print(f"    🔍 Encontrados {len(enlaces)} enlaces de variaciones")
+        if len(enlaces) == 1:
+            print(f"    ⚠️ Solo se encontró una variación")
+            return []
+
         urls_variaciones = set()
         for enlace in enlaces:
             href = await enlace.get_attribute("href")
@@ -562,6 +664,7 @@ async def recolectar_variaciones_producto(page, producto: Dict, fecha_scraping: 
                 'es_variacion': True
             }
             variaciones.append(variacion)
+
         print(f"    ✅ Recolectadas {len(variaciones)} variaciones válidas")
     except Exception as e:
         print(f"    ❌ Error recolectando variaciones: {str(e)}")
@@ -578,11 +681,11 @@ async def procesar_variacion_completa(page, variacion: Dict, fecha_scraping: str
     
     try:
         # Reducir timeout y usar domcontentloaded en lugar de networkidle
-        timeout = random.randint(60000, 90000)  # Reducido de 120-180s a 60-90s
+        timeout = random.randint(60000, 90000)  # Aumentado a 1-1.5 minutos para modo completo
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
         
-        # Espera adicional más corta
-        await asyncio.sleep(random.uniform(2.0, 4.0))
+        # Espera adicional - MODO COMPLETO
+        await asyncio.sleep(random.uniform(3.0, 6.0))
         
         # Extraer datos básicos del producto
         nombre_element = await page.query_selector('h1.ui-pdp-title')
@@ -619,17 +722,24 @@ async def procesar_variacion_completa(page, variacion: Dict, fecha_scraping: str
             boton_caracteristicas = await page.query_selector('button[data-testid="action-collapsable-target"]')
             
             if boton_caracteristicas:
+                print(f"    🔍 Extrayendo características de la variación...")
                 await boton_caracteristicas.click()
-                await asyncio.sleep(random.uniform(2.0, 4.0))  # Reducido de 3-6s a 2-4s
+                await asyncio.sleep(random.uniform(3.0, 6.0))  # Aumentado para modo completo
                 
                 tabla_memoria = await page.query_selector('div.ui-vpp-striped-specs__table')
                 
                 if tabla_memoria:
+                    print(f"    📊 Extrayendo datos de memoria y especificaciones...")
                     datos_memoria = await extraer_datos_memoria(page)
                     variacion.update(datos_memoria)
+                    print(f"    ✅ Datos de memoria extraídos: {datos_memoria}")
                 
+                print(f"    👤 Extrayendo datos del vendedor...")
                 datos_vendedor = await extraer_datos_vendedor(page)
                 variacion.update(datos_vendedor)
+                print(f"    ✅ Datos del vendedor extraídos: {datos_vendedor}")
+            else:
+                print(f"    ⚠️ No se encontró botón de características")
         except Exception as e:
             print(f"    ⚠️ Error extrayendo características: {str(e)}")
         
@@ -657,6 +767,7 @@ async def extraer_datos_memoria(page) -> Dict:
     
     try:
         filas = await page.query_selector_all('tr.andes-table__row')
+        print(f"        📋 Procesando {len(filas)} filas de especificaciones...")
         
         for fila in filas:
             encabezado_element = await fila.query_selector('th .andes-table__header__container')

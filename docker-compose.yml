@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scraping-pipeline
+    volumes:
+      # Montar directorio de salida para acceder a resultados desde el host
+      - ./data:/app/data
+      - ./backup:/app/backup
+      - ./logs:/app/logs
+      # Montar archivos de configuración (opcional)
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    environment:
+      # Variables de entorno opcionales
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - TZ=America/Bogota
+    # Recursos del contenedor
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    # Red personalizada (opcional)
+    networks:
+      - scraping-network
+    # Reiniciar política
+    restart: unless-stopped
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  scraping-network:
+    driver: bridge
+
+# Volúmenes persistentes (opcional)
+volumes:
+  scraping-data:
+    driver: local

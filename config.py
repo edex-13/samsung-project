@@ -4,16 +4,13 @@
 DISPOSITIVOS = [
     "samsung galaxy s25 ultra",
     "samsung galaxy s24 ultra", 
-    "samsung z flip 6",
-    "samsung galaxy a56",
-    "samsung galaxy a16",
 ]
 
 # Condiciones a buscar (nuevo y usado)
 CONDICIONES = ["nuevo", "usado"]
 
 # Número máximo de páginas por búsqueda
-MAX_PAGINAS = 2
+MAX_PAGINAS = 1
 
 # Configuración del navegador
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
