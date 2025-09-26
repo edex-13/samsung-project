@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: scraping-pipeline
     volumes:
-      # Montar directorio principal para archivos Excel
-      - .:/app/output
+      # Montar directorio principal para archivos Excel (CORREGIDO)
+      - ./output:/app/output
       # Montar directorios específicos para resultados
       - ./data:/app/data
       - ./backup:/app/backup

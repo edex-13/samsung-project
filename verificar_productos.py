@@ -320,8 +320,8 @@ def crear_archivo_limpio(df_validos, nombre_archivo):
     Crea un archivo limpio con solo las columnas de datos y características extraídas
     """
     # Determinar directorio data (Docker o local)
-    if os.path.exists('/app'):
-        data_dir = '/app/data'
+    if os.path.exists('/app/output'):
+        data_dir = '/app/output'
     else:
         data_dir = 'data'
     
@@ -354,11 +354,8 @@ def crear_archivo_limpio(df_validos, nombre_archivo):
     # Crear DataFrame limpio
     df_limpio = df_validos[columnas_finales].copy()
     
-    # Guardar archivo limpio en la carpeta correcta (Docker: /app/output, local: data)
-    if os.path.exists('/app/output'):
-        archivo_limpio = f"/app/output/{nombre_archivo}_limpio.xlsx"
-    else:
-        archivo_limpio = f"data/{nombre_archivo}_limpio.xlsx"
+    # Guardar archivo limpio en la carpeta correcta (usando data_dir)
+    archivo_limpio = f"{data_dir}/{nombre_archivo}_limpio.xlsx"
     df_limpio.to_excel(archivo_limpio, index=False)
     return archivo_limpio
 
@@ -366,11 +363,11 @@ def crear_archivo_invalidos(df_invalidos, nombre_archivo):
     """
     Crea un archivo con productos inválidos y columna de estado
     """
-    # Crear carpeta correcta si no existe (Docker: /app/output, local: data)
+    # Determinar directorio data (Docker o local)
     if os.path.exists('/app/output'):
-        carpeta_destino = '/app/output'
+        data_dir = '/app/output'
     else:
-        carpeta_destino = 'data'
+        data_dir = 'data'
         if not os.path.exists('data'):
             os.makedirs('data')
             print("   📁 Carpeta 'data' creada")
@@ -379,7 +376,7 @@ def crear_archivo_invalidos(df_invalidos, nombre_archivo):
     df_invalidos['estado'] = 'inválido'
     
     # Guardar archivo de inválidos en la carpeta correcta
-    archivo_invalidos = f"{carpeta_destino}/{nombre_archivo}_invalidos.xlsx"
+    archivo_invalidos = f"{data_dir}/{nombre_archivo}_invalidos.xlsx"
     df_invalidos.to_excel(archivo_invalidos, index=False)
     return archivo_invalidos
 
@@ -460,7 +457,7 @@ def analizar_archivo_excel(archivo):
         print(f"   📈 Porcentaje de validez: {(productos_validos/len(df)*100):.1f}%")
         
         # Crear archivos
-        nombre_archivo_base = os.path.splitext(archivo)[0]
+        nombre_archivo_base = os.path.splitext(os.path.basename(archivo))[0]
         
         # Archivo limpio con productos válidos
         archivo_limpio = crear_archivo_limpio(df_validos, nombre_archivo_base)

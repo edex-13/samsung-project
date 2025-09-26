@@ -95,27 +95,9 @@ async def procesar_dispositivo_individual(dispositivo: str, fecha_scraping: str)
                 
                 productos_busqueda = await scrape_busqueda_inicial_exito(page, dispositivo)
                 if productos_busqueda:
-                    print(f"[OK] Encontrados {len(productos_busqueda)} productos en búsqueda inicial")                    # Procesar productos con delays optimizados para reducir CPU
-                    for i, producto in enumerate(productos_busqueda):
-                        print(f"  [LUP] Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
-                        print(f"    [LINK] URL: {producto['url']}")
-                        
-                        # Delay solo cada 2 productos para reducir CPU
-                        if i > 0 and i % 2 == 0:
-                            await asyncio.sleep(0.02)
-                        
-                        try:
-                            producto_con_detalles = await extraer_detalles_producto_exito(page, producto, fecha_scraping)
-                            productos_dispositivo.append(producto_con_detalles)
-                            
-                            # Pausa mínima solo cada 3 productos
-                            if i % 3 == 0:
-                                await asyncio.sleep(0.01)
-                        except Exception as e:
-                            print(f"    [ERROR] Error procesando producto: {str(e)}")
-                            producto['fecha_scraping'] = fecha_scraping
-                            productos_dispositivo.append(producto)
-                            continue
+                    print(f"[OK] Encontrados {len(productos_busqueda)} productos en búsqueda inicial")
+                    # Procesar productos en lotes para reducir CPU y memoria
+                    productos_dispositivo = await procesar_productos_por_lotes_exito(page, productos_busqueda, fecha_scraping)
                 else:
                     print(f"[WARN] No se encontraron productos para {dispositivo}")
                 
@@ -225,6 +207,45 @@ async def limpiar_archivos_temporales(archivos_temporales):
         print("[CLEANUP] Archivos temporales eliminados")
     except Exception as e:
         print(f"[WARN] Error limpiando archivos temporales: {e}")
+
+async def procesar_productos_por_lotes_exito(page, productos_busqueda, fecha_scraping):
+    """Procesa productos en lotes para reducir CPU y memoria"""
+    productos_dispositivo = []
+    TAMANO_LOTE = 4  # Procesar 4 productos por lote
+    
+    # Dividir productos en lotes
+    lotes = [productos_busqueda[i:i + TAMANO_LOTE] for i in range(0, len(productos_busqueda), TAMANO_LOTE)]
+    
+    print(f"[LOTES] Procesando {len(productos_busqueda)} productos en {len(lotes)} lotes de {TAMANO_LOTE}")
+    
+    for lote_idx, lote in enumerate(lotes):
+        print(f"[LOTE {lote_idx + 1}/{len(lotes)}] Procesando {len(lote)} productos...")
+        
+        # Procesar productos del lote sin delays individuales
+        for i, producto in enumerate(lote):
+            print(f"  [LUP] Procesando producto {i+1}/{len(lote)}: {producto['nombre'][:50]}...")
+            print(f"    [LINK] URL: {producto['url']}")
+            
+            try:
+                producto_con_detalles = await extraer_detalles_producto_exito(page, producto, fecha_scraping)
+                productos_dispositivo.append(producto_con_detalles)
+            except Exception as e:
+                print(f"    [ERROR] Error procesando producto: {str(e)}")
+                producto['fecha_scraping'] = fecha_scraping
+                productos_dispositivo.append(producto)
+                continue
+        
+        # Delay solo al final de cada lote (no entre productos individuales)
+        if lote_idx < len(lotes) - 1:  # No delay en el último lote
+            print(f"[LOTE] Pausa entre lotes...")
+            await asyncio.sleep(0.1)  # Pausa solo entre lotes
+            
+            # Liberar memoria después de cada lote
+            gc.collect()
+            print(f"[MEMORY] Memoria liberada después del lote {lote_idx + 1}")
+    
+    print(f"[LOTES] Procesamiento por lotes completado: {len(productos_dispositivo)} productos")
+    return productos_dispositivo
 
 async def liberar_memoria():
     """Libera memoria explícitamente"""

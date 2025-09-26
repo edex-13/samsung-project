@@ -88,11 +88,16 @@ def procesar_archivos_excel():
         print("❌ No se pudo conectar a Firebase")
         return
     
-    # Buscar todos los archivos Excel en el directorio actual
-    archivos_excel = glob.glob("*.xlsx")
+    # Buscar archivos en la carpeta correcta (Docker: /app/output, local: directorio actual)
+    if os.path.exists('/app/output'):
+        carpeta_busqueda = '/app/output'
+        archivos_excel = glob.glob(f"{carpeta_busqueda}/*.xlsx")
+    else:
+        carpeta_busqueda = '.'
+        archivos_excel = glob.glob("*.xlsx")
     
     if not archivos_excel:
-        print("❌ No se encontraron archivos Excel")
+        print(f"❌ No se encontraron archivos Excel en la carpeta '{carpeta_busqueda}'")
         return
     
     print(f"📁 Encontrados {len(archivos_excel)} archivos Excel")

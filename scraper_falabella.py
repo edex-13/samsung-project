@@ -18,7 +18,7 @@ DISPOSITIVOS = [
 MAX_PAGINAS = 1
 VIEWPORT_WIDTH = 1920
 VIEWPORT_HEIGHT = 1080
-TIMEOUT_PRODUCTOS = 3000   # Ultra agresivo: reducido de 4000 a 3000
+TIMEOUT_PRODUCTOS = 8000   # Aumentado para permitir carga completa de JS
 DELAY_ENTRE_BUSQUEDAS = 0.5   # Ultra agresivo: reducido de 1 a 0.5
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -45,15 +45,34 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
         # Reintentos para cada página
         for intento in range(3):
             try:
-                timeout = random.randint(2000, 4000)   # Ultra agresivo: reducido de (3000,5000) a (2000,4000)
+                timeout = random.randint(5000, 8000)   # Aumentado para permitir carga completa
                 print(f"🔄 Intentando cargar página {pagina_actual} (intento {intento + 1}/3)")
-                await page.goto(url_pagina, wait_until="domcontentloaded", timeout=timeout)
+                await page.goto(url_pagina, wait_until="networkidle", timeout=timeout)
                 # Espera adicional para asegurar carga de JS
-                await asyncio.sleep(0.1)  # Ultra agresivo: reducido de 0.2 a 0.1
+                await asyncio.sleep(1.0)  # Aumentado para permitir carga completa de elementos dinámicos
                 
                 try:
-                    await page.wait_for_selector("a[data-pod]", timeout=TIMEOUT_PRODUCTOS)
-                    break  # Si encuentra el selector, salir del bucle de reintentos
+                    # Intentar esperar por múltiples selectores de productos
+                    selectores_espera = [
+                        "a[data-pod]",
+                        ".pod-item",
+                        ".search-results-list .pod",
+                        "[data-testid*='product']"
+                    ]
+                    
+                    elemento_encontrado = False
+                    for selector in selectores_espera:
+                        try:
+                            await page.wait_for_selector(selector, timeout=TIMEOUT_PRODUCTOS//len(selectores_espera))
+                            elemento_encontrado = True
+                            break
+                        except:
+                            continue
+                    
+                    if elemento_encontrado:
+                        break  # Si encuentra algún selector, salir del bucle de reintentos
+                    else:
+                        raise Exception("No se encontraron elementos de productos")
                 except:
                     if intento == 2:  # Último intento
                         print(f"    ❌ No se encontraron elementos de productos después de 3 intentos")
@@ -94,13 +113,26 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
 async def extraer_productos_pagina_falabella(page, dispositivo: str):
     productos = []
     
-    # Usar el selector correcto basado en la estructura HTML real
-    elementos_producto = await page.query_selector_all("a[data-pod]")
-    if not elementos_producto:
-        print("    ⚠️ No se encontraron productos con el selector a[data-pod]")
-        return productos
+    # Intentar múltiples selectores para encontrar productos
+    selectores_productos = [
+        "a[data-pod]",
+        ".pod-item",
+        ".search-results-list .pod",
+        "[data-testid*='product']",
+        ".product-item"
+    ]
     
-    print(f"    🔍 Encontrados {len(elementos_producto)} elementos de producto")
+    elementos_producto = []
+    for selector in selectores_productos:
+        elementos = await page.query_selector_all(selector)
+        if elementos:
+            elementos_producto = elementos
+            print(f"    🔍 Encontrados {len(elementos_producto)} elementos con selector: {selector}")
+            break
+    
+    if not elementos_producto:
+        print("    ⚠️ No se encontraron productos con ningún selector")
+        return productos
     
     for elemento in elementos_producto:
         try:
@@ -116,17 +148,39 @@ async def extraer_productos_pagina_falabella(page, dispositivo: str):
                 producto['url'] = f"https://www.falabella.com.co{producto['url']}"
             elif not producto['url'].startswith('http'):
                 producto['url'] = f"https://www.falabella.com.co/{producto['url']}"      
-            # Obtener nombre del producto usando el selector correcto
-            titulo_element = await elemento.query_selector('#testId-pod-displaySubTitle-140706748, .pod-subTitle')
-            if titulo_element:
-                producto['nombre'] = await titulo_element.inner_text()
-            else:
-                # Intentar con otros selectores
-                titulo_element = await elemento.query_selector('.pod-subTitle')
+            # Obtener nombre del producto usando múltiples selectores
+            selectores_titulo = [
+                '#testId-pod-displaySubTitle-140706748',
+                '.pod-subTitle',
+                '.pod-title',
+                '[data-testid*="title"]',
+                '.product-title',
+                'h3',
+                'h4',
+                '.title',
+                'a[title]'
+            ]
+            
+            producto['nombre'] = None
+            for selector in selectores_titulo:
+                titulo_element = await elemento.query_selector(selector)
                 if titulo_element:
-                    producto['nombre'] = await titulo_element.inner_text()
-                else:
-                    producto['nombre'] = None
+                    try:
+                        nombre_texto = await titulo_element.inner_text()
+                        if nombre_texto and nombre_texto.strip():
+                            producto['nombre'] = nombre_texto.strip()
+                            break
+                    except:
+                        continue
+            
+            # Si no se encontró con selectores, intentar obtener el atributo title
+            if not producto['nombre']:
+                try:
+                    titulo_attr = await elemento.get_attribute('title')
+                    if titulo_attr and titulo_attr.strip():
+                        producto['nombre'] = titulo_attr.strip()
+                except:
+                    pass
             
             producto['dispositivo'] = dispositivo
             
@@ -148,11 +202,11 @@ async def extraer_detalles_producto_falabella(page, producto: dict, fecha_scrapi
     for intento in range(3):
         try:
             print(f"🔄 Cargando producto (intento {intento + 1}/3)")
-            timeout = random.randint(2000, 4000)   # Ultra agresivo: reducido de (3000,5000) a (2000,4000)
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            timeout = random.randint(5000, 8000)   # Aumentado para permitir carga completa
+            await page.goto(url, wait_until="networkidle", timeout=timeout)
             
-            # Espera mínima para reducir CPU
-            await asyncio.sleep(0.05)  # Ultra optimizado: reducido de 0.2 a 0.05
+            # Espera para permitir carga completa de elementos dinámicos
+            await asyncio.sleep(0.5)  # Aumentado para permitir carga completa
             
             # Extraer datos con timeouts individuales
             try:
@@ -358,27 +412,8 @@ async def procesar_dispositivo_individual_falabella(dispositivo: str, fecha_scra
                 productos_busqueda = await scrape_busqueda_inicial_falabella(page, dispositivo)
                 if productos_busqueda:
                     print(f"✅ Encontrados {len(productos_busqueda)} productos en búsqueda inicial")
-                    # Procesar productos con delays optimizados para reducir CPU
-                    for i, producto in enumerate(productos_busqueda):
-                        print(f"  🔍 Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
-                        print(f"    🔗 URL: {producto['url']}")
-                        
-                        # Delay solo cada 2 productos para reducir CPU
-                        if i > 0 and i % 2 == 0:
-                            await asyncio.sleep(0.02)
-                        
-                        try:
-                            producto_con_detalles = await extraer_detalles_producto_falabella(page, producto, fecha_scraping)
-                            productos_dispositivo.append(producto_con_detalles)
-                            
-                            # Pausa mínima solo cada 3 productos
-                            if i % 3 == 0:
-                                await asyncio.sleep(0.01)
-                        except Exception as e:
-                            print(f"    ❌ Error procesando producto: {str(e)}")
-                            producto['fecha_scraping'] = fecha_scraping
-                            productos_dispositivo.append(producto)
-                            continue
+                    # Procesar productos en lotes para reducir CPU y memoria
+                    productos_dispositivo = await procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha_scraping)
                 else:
                     print(f"⚠️ No se encontraron productos para {dispositivo}")
                 
@@ -488,6 +523,45 @@ async def limpiar_archivos_temporales_falabella(archivos_temporales):
         print("[CLEANUP] Archivos temporales eliminados")
     except Exception as e:
         print(f"[WARN] Error limpiando archivos temporales: {e}")
+
+async def procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha_scraping):
+    """Procesa productos en lotes para reducir CPU y memoria"""
+    productos_dispositivo = []
+    TAMANO_LOTE = 4  # Procesar 4 productos por lote
+    
+    # Dividir productos en lotes
+    lotes = [productos_busqueda[i:i + TAMANO_LOTE] for i in range(0, len(productos_busqueda), TAMANO_LOTE)]
+    
+    print(f"[LOTES] Procesando {len(productos_busqueda)} productos en {len(lotes)} lotes de {TAMANO_LOTE}")
+    
+    for lote_idx, lote in enumerate(lotes):
+        print(f"[LOTE {lote_idx + 1}/{len(lotes)}] Procesando {len(lote)} productos...")
+        
+        # Procesar productos del lote sin delays individuales
+        for i, producto in enumerate(lote):
+            print(f"  🔍 Procesando producto {i+1}/{len(lote)}: {producto['nombre'][:50]}...")
+            print(f"    🔗 URL: {producto['url']}")
+            
+            try:
+                producto_con_detalles = await extraer_detalles_producto_falabella(page, producto, fecha_scraping)
+                productos_dispositivo.append(producto_con_detalles)
+            except Exception as e:
+                print(f"    ❌ Error procesando producto: {str(e)}")
+                producto['fecha_scraping'] = fecha_scraping
+                productos_dispositivo.append(producto)
+                continue
+        
+        # Delay solo al final de cada lote (no entre productos individuales)
+        if lote_idx < len(lotes) - 1:  # No delay en el último lote
+            print(f"[LOTE] Pausa entre lotes...")
+            await asyncio.sleep(0.1)  # Pausa solo entre lotes
+            
+            # Liberar memoria después de cada lote
+            gc.collect()
+            print(f"[MEMORY] Memoria liberada después del lote {lote_idx + 1}")
+    
+    print(f"[LOTES] Procesamiento por lotes completado: {len(productos_dispositivo)} productos")
+    return productos_dispositivo
 
 async def liberar_memoria_falabella():
     """Libera memoria explícitamente"""
