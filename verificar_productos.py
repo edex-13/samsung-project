@@ -354,8 +354,11 @@ def crear_archivo_limpio(df_validos, nombre_archivo):
     # Crear DataFrame limpio
     df_limpio = df_validos[columnas_finales].copy()
     
-    # Guardar archivo limpio en la carpeta data
-    archivo_limpio = f"data/{nombre_archivo}_limpio.xlsx"
+    # Guardar archivo limpio en la carpeta correcta (Docker: /app/output, local: data)
+    if os.path.exists('/app/output'):
+        archivo_limpio = f"/app/output/{nombre_archivo}_limpio.xlsx"
+    else:
+        archivo_limpio = f"data/{nombre_archivo}_limpio.xlsx"
     df_limpio.to_excel(archivo_limpio, index=False)
     return archivo_limpio
 
@@ -363,16 +366,20 @@ def crear_archivo_invalidos(df_invalidos, nombre_archivo):
     """
     Crea un archivo con productos inválidos y columna de estado
     """
-    # Crear carpeta data si no existe
-    if not os.path.exists('data'):
-        os.makedirs('data')
-        print("   📁 Carpeta 'data' creada")
+    # Crear carpeta correcta si no existe (Docker: /app/output, local: data)
+    if os.path.exists('/app/output'):
+        carpeta_destino = '/app/output'
+    else:
+        carpeta_destino = 'data'
+        if not os.path.exists('data'):
+            os.makedirs('data')
+            print("   📁 Carpeta 'data' creada")
     
     # Agregar columna de estado
     df_invalidos['estado'] = 'inválido'
     
-    # Guardar archivo de inválidos en la carpeta data
-    archivo_invalidos = f"data/{nombre_archivo}_invalidos.xlsx"
+    # Guardar archivo de inválidos en la carpeta correcta
+    archivo_invalidos = f"{carpeta_destino}/{nombre_archivo}_invalidos.xlsx"
     df_invalidos.to_excel(archivo_invalidos, index=False)
     return archivo_invalidos
 

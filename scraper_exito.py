@@ -2,6 +2,8 @@ import asyncio
 import re
 import pandas as pd
 import random
+import gc
+import os
 from datetime import datetime
 from playwright.async_api import async_playwright
 
@@ -16,8 +18,8 @@ DISPOSITIVOS = [
 MAX_PAGINAS = 1  # Cambiado de 1 a 2 páginas
 VIEWPORT_WIDTH = 1920
 VIEWPORT_HEIGHT = 1080
-TIMEOUT_PRODUCTOS = 7000   # Agresivo pero estable: equilibrio perfecto
-DELAY_ENTRE_BUSQUEDAS = 1   # Mantener rápido
+TIMEOUT_PRODUCTOS = 5000   # Más agresivo: reducido de 7000 a 5000
+DELAY_ENTRE_BUSQUEDAS = 0.5   # Más rápido: reducido de 1 a 0.5
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
@@ -31,113 +33,211 @@ def get_url_exito(dispositivo):
     return f"https://www.exito.com/s?q={dispositivo_formateado}&sort=score_desc&page=0"
 
 async def scrape_exito():
-    todos_productos = []
     fecha_scraping = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[INICIANDO] Scraper Exito para {len(DISPOSITIVOS)} dispositivos")
     print("=" * 60)
+    
+    # Lista para almacenar archivos temporales
+    archivos_temporales = []
+    
+    # Procesar cada dispositivo por separado
+    for i, dispositivo in enumerate(DISPOSITIVOS):
+        print(f"\n[DEVICE {i+1}/{len(DISPOSITIVOS)}] Procesando: {dispositivo}")
+        print("=" * 50)
+        
+        # Procesar dispositivo individual
+        productos_dispositivo = await procesar_dispositivo_individual(dispositivo, fecha_scraping)
+        
+        if productos_dispositivo:
+            # Guardar Excel temporal para este dispositivo
+            archivo_temporal = await guardar_excel_temporal(productos_dispositivo, dispositivo, i+1)
+            if archivo_temporal:
+                archivos_temporales.append(archivo_temporal)
+                print(f"[SAVE] Archivo temporal guardado: {archivo_temporal}")
+        else:
+            print(f"[WARN] No se encontraron productos para {dispositivo}")
+        
+        # Liberar memoria explícitamente
+        await liberar_memoria()
+        print(f"[MEMORY] Memoria liberada después de procesar {dispositivo}")
+    
+    # Combinar todos los archivos Excel al final
+    if archivos_temporales:
+        print(f"\n[COMBINE] Combinando {len(archivos_temporales)} archivos temporales...")
+        archivo_final = await combinar_archivos_excel(archivos_temporales)
+        
+        if archivo_final:
+            print(f"[FINAL] Archivo final creado: {archivo_final}")
+            print(f"[INFO] El archivo está listo para ser procesado por el script de Firebase")
+        else:
+            print("[ERROR] No se pudo crear el archivo final")
+    else:
+        print("[ERROR] No se encontraron productos para ningún dispositivo")
+
+async def procesar_dispositivo_individual(dispositivo: str, fecha_scraping: str):
+    """Procesa un dispositivo individual con su propia instancia de Playwright"""
+    productos_dispositivo = []
+    
+    # Pequeña pausa para evitar sobrecarga del sistema
+    await asyncio.sleep(0.1)
+    
     async with async_playwright() as p:
         for intento in range(3):
-            user_agent = random.choice(USER_AGENTS)
-            print(f"[PC] User-Agent usado: {user_agent}")
-            browser = await p.chromium.launch(headless=True, args=[f'--user-agent={user_agent}'])
-            page = await browser.new_page()
-            await page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
-            exito = False
-            for dispositivo in DISPOSITIVOS:
-                print(f"\n[LUP] Búsqueda: {dispositivo}")
-                await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
-                try:
-                    productos_busqueda = await scrape_busqueda_inicial_exito(page, dispositivo)
-                    if productos_busqueda:
-                        exito = True
-                        print(f"[OK] Encontrados {len(productos_busqueda)} productos en búsqueda inicial")
-                        for i, producto in enumerate(productos_busqueda):
-                            print(f"  [LUP] Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
-                            print(f"    [LINK] URL: {producto['url']}")
-                            await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
-                            try:
-                                producto_con_detalles = await extraer_detalles_producto_exito(page, producto, fecha_scraping)
-                                todos_productos.append(producto_con_detalles)
-                                await asyncio.sleep(random.uniform(0.1, 0.3))  # Súper agresivo: reducido de (0.5,1) a (0.1,0.3)
-                            except Exception as e:
-                                print(f"    [ERROR] Error procesando producto: {str(e)}")
-                                producto['fecha_scraping'] = fecha_scraping
-                                todos_productos.append(producto)
-                                continue
-                    else:
-                        print(f"[WARN] No se encontraron productos para {dispositivo}")
-                    print(f"[WAIT] Esperando {DELAY_ENTRE_BUSQUEDAS} segundos...")
-                    await asyncio.sleep(DELAY_ENTRE_BUSQUEDAS)
-                except Exception as e:
-                    print(f"[ERROR] Error en búsqueda {dispositivo}: {str(e)}")
-                    continue
-            await browser.close()
-            if exito:
-                break
-
-    print(f"\n[INFO] Finalizando scraper. Productos encontrados: {len(todos_productos)}")
-    
-    if todos_productos:
-        try:
-            print(f"[INFO] Creando DataFrame con {len(todos_productos)} productos...")
-            df_completo = pd.DataFrame(todos_productos)
-            print(f"[INFO] DataFrame creado exitosamente. Columnas: {list(df_completo.columns)}")
-            
-            # Intentar guardar con nombre por defecto (en directorio montado si es Docker)
-            import os
-            if os.path.exists('/app/output'):
-                nombre_archivo = "/app/output/resultados_exito.xlsx"
-            else:
-                nombre_archivo = "resultados_exito.xlsx"
-            print(f"[INFO] Intentando guardar archivo: {nombre_archivo}")
-            df_completo.to_excel(nombre_archivo, index=False)
-            
-            # Verificar que el archivo se creó
-            import os
-            if os.path.exists(nombre_archivo):
-                tamaño = os.path.getsize(nombre_archivo)
-                print(f"\n[CELEBRATE] ¡Scraping Éxito finalizado!")
-                print(f"[CHART] Total de productos: {len(todos_productos)}")
-                print(f"[SAVE] Archivo guardado: {nombre_archivo} ({tamaño} bytes)")
-                print(f"[INFO] Ruta completa: {os.path.abspath(nombre_archivo)}")
-            else:
-                print(f"[ERROR] El archivo no se pudo crear: {nombre_archivo}")
+            try:
+                user_agent = random.choice(USER_AGENTS)
+                print(f"[PC] User-Agent usado: {user_agent}")
+                browser = await p.chromium.launch(headless=True, args=[f'--user-agent={user_agent}'])
+                page = await browser.new_page()
+                await page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
                 
-        except PermissionError as e:
-            print(f"[WARN] Error de permisos: {e}")
+                print(f"[LUP] Búsqueda: {dispositivo}")
+                await asyncio.sleep(random.uniform(0.05, 0.15))
+                
+                productos_busqueda = await scrape_busqueda_inicial_exito(page, dispositivo)
+                if productos_busqueda:
+                    print(f"[OK] Encontrados {len(productos_busqueda)} productos en búsqueda inicial")                    # Procesar productos con delays optimizados para reducir CPU
+                    for i, producto in enumerate(productos_busqueda):
+                        print(f"  [LUP] Procesando producto {i+1}/{len(productos_busqueda)}: {producto['nombre'][:50]}...")
+                        print(f"    [LINK] URL: {producto['url']}")
+                        
+                        # Delay solo cada 2 productos para reducir CPU
+                        if i > 0 and i % 2 == 0:
+                            await asyncio.sleep(0.02)
+                        
+                        try:
+                            producto_con_detalles = await extraer_detalles_producto_exito(page, producto, fecha_scraping)
+                            productos_dispositivo.append(producto_con_detalles)
+                            
+                            # Pausa mínima solo cada 3 productos
+                            if i % 3 == 0:
+                                await asyncio.sleep(0.01)
+                        except Exception as e:
+                            print(f"    [ERROR] Error procesando producto: {str(e)}")
+                            producto['fecha_scraping'] = fecha_scraping
+                            productos_dispositivo.append(producto)
+                            continue
+                else:
+                    print(f"[WARN] No se encontraron productos para {dispositivo}")
+                
+                await browser.close()
+                break  # Si llegamos aquí, el procesamiento fue exitoso
+                
+            except Exception as e:
+                print(f"[ERROR] Error en intento {intento + 1} para {dispositivo}: {str(e)}")
+                if intento == 2:  # Último intento
+                    print(f"[ERROR] Falló después de 3 intentos para {dispositivo}")
+                else:
+                    await asyncio.sleep(1)  # Esperar antes del siguiente intento
+                continue
+    
+    return productos_dispositivo
+
+async def guardar_excel_temporal(productos, dispositivo, numero_dispositivo):
+    """Guarda un Excel temporal para un dispositivo específico"""
+    try:
+        print(f"[INFO] Creando DataFrame temporal con {len(productos)} productos...")
+        df_temporal = pd.DataFrame(productos)
+        print(f"[INFO] DataFrame temporal creado. Columnas: {list(df_temporal.columns)}")
+        
+        # Crear nombre de archivo temporal
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dispositivo_limpio = dispositivo.replace(" ", "_").replace("+", "_")
+        
+        if os.path.exists('/app/output'):
+            archivo_temporal = f"/app/output/temp_exito_{dispositivo_limpio}_{timestamp}.xlsx"
+        else:
+            archivo_temporal = f"temp_exito_{dispositivo_limpio}_{timestamp}.xlsx"
+        
+        print(f"[INFO] Guardando archivo temporal: {archivo_temporal}")
+        df_temporal.to_excel(archivo_temporal, index=False)
+        
+        # Verificar que el archivo se creó
+        if os.path.exists(archivo_temporal):
+            tamaño = os.path.getsize(archivo_temporal)
+            print(f"[OK] Archivo temporal guardado: {archivo_temporal} ({tamaño} bytes)")
+            return archivo_temporal
+        else:
+            print(f"[ERROR] El archivo temporal no se pudo crear: {archivo_temporal}")
+            return None
+            
+    except Exception as e:
+        print(f"[ERROR] Error guardando archivo temporal: {e}")
+        return None
+
+async def combinar_archivos_excel(archivos_temporales):
+    """Combina todos los archivos Excel temporales en uno final"""
+    try:
+        print(f"[COMBINE] Combinando {len(archivos_temporales)} archivos...")
+        todos_dataframes = []
+        
+        for archivo in archivos_temporales:
+            if os.path.exists(archivo):
+                df = pd.read_excel(archivo)
+                todos_dataframes.append(df)
+                print(f"[OK] Cargado: {archivo} ({len(df)} productos)")
+            else:
+                print(f"[WARN] Archivo no encontrado: {archivo}")
+        
+        if todos_dataframes:
+            # Combinar todos los DataFrames
+            df_final = pd.concat(todos_dataframes, ignore_index=True)
+            print(f"[INFO] DataFrame final creado con {len(df_final)} productos")
+            
+            # Guardar archivo final
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             if os.path.exists('/app/output'):
-                nuevo_archivo = f"/app/output/resultados_exito_{timestamp}.xlsx"
+                archivo_final = f"/app/output/resultados_exito_final_{timestamp}.xlsx"
             else:
-                nuevo_archivo = f"resultados_exito_{timestamp}.xlsx"
-            print(f"[INFO] Intentando con nuevo nombre: {nuevo_archivo}")
-            df_completo.to_excel(nuevo_archivo, index=False)
+                archivo_final = f"resultados_exito_final_{timestamp}.xlsx"
             
-            import os
-            if os.path.exists(nuevo_archivo):
-                tamaño = os.path.getsize(nuevo_archivo)
-                print(f"\n[CELEBRATE] ¡Scraping Éxito finalizado!")
-                print(f"[CHART] Total de productos: {len(todos_productos)}")
-                print(f"[SAVE] Archivo guardado: {nuevo_archivo} ({tamaño} bytes)")
-                print(f"[INFO] Ruta completa: {os.path.abspath(nuevo_archivo)}")
-            else:
-                print(f"[ERROR] El archivo no se pudo crear: {nuevo_archivo}")
+            df_final.to_excel(archivo_final, index=False)
+            
+            if os.path.exists(archivo_final):
+                tamaño = os.path.getsize(archivo_final)
+                print(f"[CELEBRATE] ¡Archivo final creado!")
+                print(f"[FINAL] Archivo: {archivo_final} ({tamaño} bytes)")
+                print(f"[FINAL] Total productos: {len(df_final)}")
+                print(f"[FINAL] Ruta completa: {os.path.abspath(archivo_final)}")
                 
-        except Exception as e:
-            print(f"[ERROR] Error inesperado guardando archivo: {e}")
-            print(f"[INFO] Tipo de error: {type(e)}")
-            # Guardar como CSV alternativo
-            try:
-                if os.path.exists('/app/output'):
-                    nombre_csv = f"/app/output/resultados_exito_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                else:
-                    nombre_csv = f"resultados_exito_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                df_completo.to_csv(nombre_csv, index=False)
-                print(f"[INFO] Guardado como CSV alternativo: {nombre_csv}")
-            except:
-                print(f"[ERROR] Tampoco se pudo guardar como CSV")
-    else:
-        print("[ERROR] No se encontraron productos para guardar")
+                # Limpiar archivos temporales
+                await limpiar_archivos_temporales(archivos_temporales)
+                
+                return archivo_final
+            else:
+                print(f"[ERROR] No se pudo crear el archivo final")
+                return None
+        else:
+            print("[ERROR] No se encontraron DataFrames para combinar")
+            return None
+            
+    except Exception as e:
+        print(f"[ERROR] Error combinando archivos: {e}")
+        return None
+
+async def limpiar_archivos_temporales(archivos_temporales):
+    """Limpia los archivos temporales después de combinar"""
+    try:
+        print(f"[CLEANUP] Limpiando {len(archivos_temporales)} archivos temporales...")
+        for archivo in archivos_temporales:
+            if os.path.exists(archivo):
+                os.remove(archivo)
+                print(f"[CLEAN] Eliminado: {archivo}")
+        print("[CLEANUP] Archivos temporales eliminados")
+    except Exception as e:
+        print(f"[WARN] Error limpiando archivos temporales: {e}")
+
+async def liberar_memoria():
+    """Libera memoria explícitamente"""
+    try:
+        # Forzar recolección de basura
+        gc.collect()
+        print("[MEMORY] Recolección de basura ejecutada")
+        
+        # Pausa mínima para reducir CPU
+        await asyncio.sleep(0.1)  # Reducido de 0.5 a 0.1 para menos CPU
+        
+    except Exception as e:
+        print(f"[WARN] Error liberando memoria: {e}")
 
 async def scrape_busqueda_inicial_exito(page, dispositivo: str):
     url = get_url_exito(dispositivo)
@@ -152,11 +252,11 @@ async def scrape_busqueda_inicial_exito(page, dispositivo: str):
         # Reintentos para cada página
         for intento in range(3):
             try:
-                timeout = random.randint(5000, 7000)   # Agresivo pero estable
+                timeout = random.randint(3000, 5000)   # Ultra agresivo: reducido de (5000,7000) a (3000,5000)
                 print(f"[RELOAD] Intentando cargar página {pagina_actual} (intento {intento + 1}/3)")
                 await page.goto(url_pagina, wait_until="domcontentloaded", timeout=timeout)
                 # Espera adicional para asegurar carga de JS
-                await asyncio.sleep(0.2)  # Súper agresivo: reducido de 1 a 0.2
+                await asyncio.sleep(0.1)  # Ultra agresivo: reducido de 0.2 a 0.1
                 
                 try:
                     await page.wait_for_selector("article.productCard_productCard__M0677", timeout=TIMEOUT_PRODUCTOS)
@@ -172,7 +272,7 @@ async def scrape_busqueda_inicial_exito(page, dispositivo: str):
                         return productos
                     else:
                         print(f"     Intento {intento + 1} fallido, reintentando...")
-                        await asyncio.sleep(0.1)  # Súper agresivo: reducido de 0.5 a 0.1
+                        await asyncio.sleep(0.05)  # Ultra agresivo: reducido de 0.1 a 0.05
                         continue
                         
             except Exception as e:
@@ -181,7 +281,7 @@ async def scrape_busqueda_inicial_exito(page, dispositivo: str):
                     return productos
                 else:
                     print(f"     Error en intento {intento + 1}: {str(e)}, reintentando...")
-                    await asyncio.sleep(0.1)  # Súper agresivo: reducido de 0.5 a 0.1
+                    await asyncio.sleep(0.05)  # Ultra agresivo: reducido de 0.1 a 0.05
                     continue
         
         productos_pagina = await extraer_productos_pagina_exito(page, dispositivo)
@@ -195,7 +295,7 @@ async def scrape_busqueda_inicial_exito(page, dispositivo: str):
         productos.extend(productos_pagina)
         print(f"     Encontrados {len(productos_pagina)} productos en página {pagina_actual}")
         pagina_actual += 1
-        await asyncio.sleep(random.uniform(0.5, 1))  # Súper agresivo: reducido de (3,5) a (0.5,1)
+        await asyncio.sleep(random.uniform(0.2, 0.4))  # Ultra agresivo: reducido de (0.5,1) a (0.2,0.4)
     return productos
 
 async def extraer_productos_pagina_exito(page, dispositivo: str):
@@ -253,11 +353,11 @@ async def extraer_detalles_producto_exito(page, producto: dict, fecha_scraping: 
     for intento in range(3):
         try:
             print(f"       Cargando producto (intento {intento + 1}/3)")
-            timeout = random.randint(5000, 7000)   # Agresivo pero estable
+            timeout = random.randint(3000, 5000)   # Ultra agresivo: reducido de (5000,7000) a (3000,5000)
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
             
-            # Espera adicional para que cargue el contenido
-            await asyncio.sleep(0.1)  # Súper agresivo: reducido de 0.5 a 0.1
+            # Espera mínima para reducir CPU
+            await asyncio.sleep(0.02)  # Ultra optimizado: reducido de 0.05 a 0.02
             
             # Extraer datos con timeouts individuales
             try:
@@ -298,7 +398,7 @@ async def extraer_detalles_producto_exito(page, producto: dict, fecha_scraping: 
                 })
             else:
                 print(f"       Error en intento {intento + 1}: {str(e)}, reintentando...")
-                await asyncio.sleep(0.5)  # Súper agresivo: reducido de 2 a 0.5
+                await asyncio.sleep(0.2)  # Ultra agresivo: reducido de 0.5 a 0.2
                 continue
     
     return producto
@@ -510,6 +610,7 @@ async def extraer_datos_vendedor_exito(page):
     except Exception as e:
         print(f"     Error extrayendo datos del vendedor: {str(e)}")
     return datos
+
 
 if __name__ == "__main__":
     print("[INICIANDO] Scraper Exito...")

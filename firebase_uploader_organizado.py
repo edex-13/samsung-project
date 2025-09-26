@@ -179,15 +179,20 @@ def normalizar_vendedor(vendedor):
     return "Sin vendedor"
 
 def leer_archivos_data():
-    """Lee todos los archivos de la carpeta data y los organiza por tipo"""
+    """Lee todos los archivos de la carpeta correcta y los organiza por tipo"""
     archivos_validos = []
     archivos_invalidos = []
     
-    # Buscar archivos en la carpeta data
-    if os.path.exists('data'):
-        for archivo in os.listdir('data'):
+    # Buscar archivos en la carpeta correcta (Docker: /app/output, local: data)
+    if os.path.exists('/app/output'):
+        carpeta_busqueda = '/app/output'
+    else:
+        carpeta_busqueda = 'data'
+    
+    if os.path.exists(carpeta_busqueda):
+        for archivo in os.listdir(carpeta_busqueda):
             if archivo.endswith('.xlsx'):
-                ruta_completa = os.path.join('data', archivo)
+                ruta_completa = os.path.join(carpeta_busqueda, archivo)
                 if '_limpio.xlsx' in archivo:
                     archivos_validos.append(ruta_completa)
                 elif '_invalidos.xlsx' in archivo:
@@ -406,7 +411,8 @@ def main():
     archivos_validos, archivos_invalidos = leer_archivos_data()
     
     if not archivos_validos and not archivos_invalidos:
-        print("❌ No se encontraron archivos en la carpeta 'data'")
+        carpeta_busqueda = '/app/output' if os.path.exists('/app/output') else 'data'
+        print(f"❌ No se encontraron archivos en la carpeta '{carpeta_busqueda}'")
         return
     
     print(f"📁 Archivos válidos encontrados: {len(archivos_validos)}")
