@@ -54,7 +54,7 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
                 try:
                     # Intentar esperar por múltiples selectores de productos
                     selectores_espera = [
-                        "a[data-pod]",
+                        "a[data-pod]",  # Selector principal para tarjetas de producto
                         ".pod-item",
                         ".search-results-list .pod",
                         "[data-testid*='product']"
@@ -115,7 +115,7 @@ async def extraer_productos_pagina_falabella(page, dispositivo: str):
     
     # Intentar múltiples selectores para encontrar productos
     selectores_productos = [
-        "a[data-pod]",
+        "a[data-pod]",  # Selector principal para tarjetas de producto
         ".pod-item",
         ".search-results-list .pod",
         "[data-testid*='product']",
@@ -150,8 +150,7 @@ async def extraer_productos_pagina_falabella(page, dispositivo: str):
                 producto['url'] = f"https://www.falabella.com.co/{producto['url']}"      
             # Obtener nombre del producto usando múltiples selectores
             selectores_titulo = [
-                '#testId-pod-displaySubTitle-140706748',
-                '.pod-subTitle',
+                '.pod-subTitle',  # Selector principal para nombre del producto
                 '.pod-title',
                 '[data-testid*="title"]',
                 '.product-title',
@@ -181,6 +180,17 @@ async def extraer_productos_pagina_falabella(page, dispositivo: str):
                         producto['nombre'] = titulo_attr.strip()
                 except:
                     pass
+            
+            # Obtener vendedor desde el listado
+            vendedor_element = await elemento.query_selector('b.pod-sellerText')
+            if vendedor_element:
+                try:
+                    vendedor_texto = await vendedor_element.inner_text()
+                    producto['vendedor'] = vendedor_texto.strip()
+                except:
+                    producto['vendedor'] = None
+            else:
+                producto['vendedor'] = None
             
             producto['dispositivo'] = dispositivo
             
@@ -222,7 +232,9 @@ async def extraer_detalles_producto_falabella(page, producto: dict, fecha_scrapi
                 print(f"      ⚠️ Error extrayendo especificaciones: {str(e)}")
             
             try:
-                datos_vendedor = await extraer_datos_vendedor_falabella(page)
+                # Pasar el vendedor del listado si está disponible
+                vendedor_listado = producto.get('vendedor')
+                datos_vendedor = await extraer_datos_vendedor_falabella(page, vendedor_listado)
                 producto.update(datos_vendedor)
             except Exception as e:
                 print(f"      ⚠️ Error extrayendo datos del vendedor: {str(e)}")
@@ -261,28 +273,28 @@ async def extraer_precios_producto_falabella(page):
         'porcentaje_descuento': None
     }
     try:
-        # Buscar precio con tarjeta Falabella (data-cmr-price) - el más bajo
+        # Buscar precio con tarjeta Falabella (data-cmr-price) - el más bajo, exclusivo con tarjeta CMR
         precio_tarjeta_element = await page.query_selector('li[data-cmr-price] span')
         if precio_tarjeta_element:
             precio_texto = await precio_tarjeta_element.inner_text()
             precio_limpio = re.sub(r'[^\d]', '', precio_texto)
             precios['precio_tarjeta_falabella'] = int(precio_limpio) if precio_limpio else None
         
-        # Buscar precio con descuento (data-event-price) - precio intermedio
+        # Buscar precio con descuento (data-event-price) - precio intermedio con descuento
         precio_descuento_element = await page.query_selector('li[data-event-price] span')
         if precio_descuento_element:
             precio_texto = await precio_descuento_element.inner_text()
             precio_limpio = re.sub(r'[^\d]', '', precio_texto)
             precios['precio_descuento'] = int(precio_limpio) if precio_limpio else None
         
-        # Buscar precio normal (data-normal-price) - precio original tachado
+        # Buscar precio normal (data-normal-price) - precio normal/tachado sin descuento
         precio_normal_element = await page.query_selector('li[data-normal-price] span')
         if precio_normal_element:
             precio_texto = await precio_normal_element.inner_text()
             precio_limpio = re.sub(r'[^\d]', '', precio_texto)
             precios['precio_normal'] = int(precio_limpio) if precio_limpio else None
         
-        # Buscar porcentaje de descuento
+        # Buscar porcentaje de descuento en .discount-badge-item
         descuento_element = await page.query_selector('.discount-badge-item')
         if descuento_element:
             descuento_texto = await descuento_element.inner_text()
@@ -307,14 +319,19 @@ async def extraer_especificaciones_falabella(page):
         'condicion': None
     }
     try:
+        # Botón para expandir y mostrar más especificaciones ("Ver más")
         boton_ver_mas = await page.query_selector('button#swatch-collapsed-id')
         if boton_ver_mas:
             await boton_ver_mas.click()
             await asyncio.sleep(random.uniform(0.05, 0.15))  # Ultra agresivo: reducido de (0.1,0.3) a (0.05,0.15)
+        
+        # Filas de la tabla de especificaciones
         filas = await page.query_selector_all('table.specification-table tr')
         for fila in filas:
             try:
+                # Nombre de la característica (ej. "Memoria RAM", "Modelo")
                 nombre_element = await fila.query_selector('td.property-name')
+                # Valor de la característica (ej. "8 GB", "Galaxy S24")
                 valor_element = await fila.query_selector('td.property-value')
                 if nombre_element and valor_element:
                     nombre = await nombre_element.inner_text()
@@ -335,15 +352,18 @@ async def extraer_especificaciones_falabella(page):
         print(f"    ⚠️ Error extrayendo especificaciones: {str(e)}")
     return especificaciones
 
-async def extraer_datos_vendedor_falabella(page):
+async def extraer_datos_vendedor_falabella(page, vendedor_listado=None):
     datos = {
-        'vendedor': None
+        'vendedor': vendedor_listado  # Usar vendedor del listado si está disponible
     }
     try:
-        vendedor_element = await page.query_selector('#testId-SellerInfo-sellerName')
-        if vendedor_element:
-            vendedor_texto = await vendedor_element.inner_text()
-            datos['vendedor'] = vendedor_texto.strip()
+        # Si no se encontró vendedor en el listado, intentar obtenerlo de la página del producto
+        if not vendedor_listado:
+            # Nombre del vendedor dentro de la página del producto
+            vendedor_element = await page.query_selector('#testId-SellerInfo-sellerName')
+            if vendedor_element:
+                vendedor_texto = await vendedor_element.inner_text()
+                datos['vendedor'] = vendedor_texto.strip()
     except Exception as e:
         print(f"    ⚠️ Error extrayendo datos del vendedor: {str(e)}")
     return datos
