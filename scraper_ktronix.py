@@ -41,7 +41,7 @@ KTRONIX_CONFIG = {
         "features": ".product__item__information__key-features--list li.item"
     },
     "product_page": {
-        "price_main": "#js-original_price, .price-ktronix .price",
+        "price_main": "#js-original_price",
         "specs_container": ".new-container__table__classifications___type__item",
         "spec_name": ".new-container__table__classifications___type__item_feature",
         "spec_value": ".new-container__table__classifications___type__item_result",
@@ -297,12 +297,19 @@ async def extraer_precios_producto_ktronix(page):
         'porcentaje_descuento': None
     }
     try:
-        # Buscar precio principal usando los selectores de Ktronix
+        # Buscar precio principal usando el selector específico de Ktronix
         precio_main_element = await page.query_selector(KTRONIX_CONFIG["product_page"]["price_main"])
         if precio_main_element:
             precio_texto = await precio_main_element.inner_text()
+            print(f"    📊 Precio texto crudo: '{precio_texto}'")
+            
+            # Limpiar el precio removiendo todo excepto números
             precio_limpio = re.sub(r'[^\d]', '', precio_texto)
-            precios['precio_ktronix'] = int(precio_limpio) if precio_limpio else None
+            if precio_limpio:
+                precios['precio_ktronix'] = int(precio_limpio)
+                print(f"    ✅ Precio extraído: ${precios['precio_ktronix']:,}")
+            else:
+                print(f"    ⚠️ No se pudo extraer precio de: '{precio_texto}'")
         
         # Buscar precio tachado (precio original)
         precio_tachado_selectors = [
@@ -367,7 +374,7 @@ async def extraer_precios_basicos_ktronix(page):
     try:
         # Buscar precios con timeouts más cortos
         selectores_precio = [
-            (KTRONIX_CONFIG["product_page"]["price_main"], 'precio_ktronix'),
+            ('#js-original_price', 'precio_ktronix'),
             ('.price-discount', 'precio_descuento'),
             ('.price-original', 'precio_normal'),
             (KTRONIX_CONFIG["product_page"]["benefits"], 'porcentaje_descuento')
