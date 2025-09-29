@@ -165,8 +165,8 @@ run_scraper() {
   echo -e "${G}OK${NC} Scraper ${name} finalizado"
 }
 
-run_scraper "Éxito" "scraper_exito.py"
 run_scraper "Falabella" "scraper_falabella.py"
+run_scraper "Éxito" "scraper_exito.py"
 
 # 7) Verificación y limpieza de productos
 # Este script genera archivos en carpeta data: *_limpio.xlsx e *_invalidos.xlsx

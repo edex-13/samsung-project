@@ -4,6 +4,7 @@ import pandas as pd
 import random
 import gc
 import os
+import shutil
 from datetime import datetime
 from playwright.async_api import async_playwright
 
@@ -212,11 +213,44 @@ async def extraer_detalles_producto_falabella(page, producto: dict, fecha_scrapi
     for intento in range(3):
         try:
             print(f"🔄 Cargando producto (intento {intento + 1}/3)")
-            timeout = random.randint(5000, 8000)   # Aumentado para permitir carga completa
-            await page.goto(url, wait_until="networkidle", timeout=timeout)
             
-            # Espera para permitir carga completa de elementos dinámicos
-            await asyncio.sleep(0.5)  # Aumentado para permitir carga completa
+            # Timeout progresivo más agresivo
+            timeouts = [10000, 15000, 20000]
+            timeout = timeouts[intento]
+            
+            # Estrategia de carga múltiple
+            carga_exitosa = False
+            
+            # Método 1: domcontentloaded (más rápido)
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+                await asyncio.sleep(0.5)
+                carga_exitosa = True
+                print(f"    ✅ Carga exitosa con domcontentloaded")
+            except Exception as e1:
+                print(f"    ⚠️ domcontentloaded falló: {str(e1)[:50]}...")
+                
+                # Método 2: networkidle (más lento pero más completo)
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=timeout)
+                    await asyncio.sleep(0.3)
+                    carga_exitosa = True
+                    print(f"    ✅ Carga exitosa con networkidle")
+                except Exception as e2:
+                    print(f"    ⚠️ networkidle falló: {str(e2)[:50]}...")
+                    
+                    # Método 3: load (fallback básico)
+                    try:
+                        await page.goto(url, wait_until="load", timeout=timeout)
+                        await asyncio.sleep(0.5)
+                        carga_exitosa = True
+                        print(f"    ✅ Carga exitosa con load")
+                    except Exception as e3:
+                        print(f"    ❌ Todos los métodos de carga fallaron")
+                        raise e3
+            
+            if not carga_exitosa:
+                raise Exception("No se pudo cargar la página con ningún método")
             
             # Extraer datos con timeouts individuales
             try:
@@ -244,23 +278,42 @@ async def extraer_detalles_producto_falabella(page, producto: dict, fecha_scrapi
             
         except Exception as e:
             if intento == 2:  # Último intento
-                print(f"      ❌ Error procesando producto después de 3intentos: {str(e)}")
+                print(f"      ❌ Error procesando producto después de 3 intentos: {str(e)}")
+                print(f"      🔄 Intentando extracción básica sin cargar página completa...")
+                
+                # Estrategia de fallback: intentar extraer datos básicos sin carga completa
+                try:
+                    # Intentar cargar solo el HTML básico
+                    await page.goto(url, wait_until="domcontentloaded", timeout=5000)
+                    await asyncio.sleep(0.2)
+                    
+                    # Intentar extraer solo precios básicos
+                    try:
+                        precios_basicos = await extraer_precios_basicos_falabella(page)
+                        producto.update(precios_basicos)
+                        print(f"      ✅ Datos básicos extraídos exitosamente")
+                    except:
+                        print(f"      ⚠️ No se pudieron extraer datos básicos")
+                    
+                except:
+                    print(f"      ❌ Fallback también falló")
+                
                 # Agregar datos básicos al producto
                 producto.update({
-                    'precio_tarjeta_falabella': None,
-                    'precio_descuento': None,
-                    'precio_normal': None,
-                    'porcentaje_descuento': None,
+                    'precio_tarjeta_falabella': producto.get('precio_tarjeta_falabella'),
+                    'precio_descuento': producto.get('precio_descuento'),
+                    'precio_normal': producto.get('precio_normal'),
+                    'porcentaje_descuento': producto.get('porcentaje_descuento'),
                     'memoria_interna': None,
                     'memoria_ram': None,
                     'color': None,
                     'modelo': None,
                     'condicion': None,
-                    'vendedor': None
+                    'vendedor': producto.get('vendedor')
                 })
             else:
                 print(f"⚠️ Error en intento {intento + 1}: {str(e)}, reintentando...")
-                await asyncio.sleep(0.2)  # Ultra agresivo: reducido de 0.5 a 0.2
+                await asyncio.sleep(0.5)  # Pausa más larga entre reintentos
                 continue
     
     return producto
@@ -308,6 +361,43 @@ async def extraer_precios_producto_falabella(page):
                     precios['porcentaje_descuento'] = int(match.group(1))
     except Exception as e:
         print(f"    ⚠️ Error extrayendo precios: {str(e)}")
+    return precios
+
+async def extraer_precios_basicos_falabella(page):
+    """Extrae precios básicos con timeouts más cortos para páginas problemáticas"""
+    precios = {
+        'precio_tarjeta_falabella': None,
+        'precio_descuento': None,
+        'precio_normal': None,
+        'porcentaje_descuento': None
+    }
+    try:
+        # Buscar precios con timeouts más cortos
+        selectores_precio = [
+            ('li[data-cmr-price] span', 'precio_tarjeta_falabella'),
+            ('li[data-event-price] span', 'precio_descuento'),
+            ('li[data-normal-price] span', 'precio_normal'),
+            ('.discount-badge-item', 'porcentaje_descuento')
+        ]
+        
+        for selector, campo in selectores_precio:
+            try:
+                elemento = await page.query_selector(selector)
+                if elemento:
+                    texto = await elemento.inner_text()
+                    if campo == 'porcentaje_descuento':
+                        match = re.search(r'(\d+)%', texto)
+                        if match:
+                            precios[campo] = int(match.group(1))
+                    else:
+                        precio_limpio = re.sub(r'[^\d]', '', texto)
+                        if precio_limpio:
+                            precios[campo] = int(precio_limpio)
+            except:
+                continue
+                
+    except Exception as e:
+        print(f"    ⚠️ Error extrayendo precios básicos: {str(e)}")
     return precios
 
 async def extraer_especificaciones_falabella(page):
@@ -373,6 +463,9 @@ async def scrape_falabella():
     print(f"🚀 Iniciando scraper Falabella/Linio para {len(DISPOSITIVOS)} dispositivos")
     print("=" * 60)
     
+    # Limpiar caché de Playwright al inicio
+    await limpiar_cache_playwright()
+    
     # Lista para almacenar archivos temporales
     archivos_temporales = []
     
@@ -418,13 +511,36 @@ async def procesar_dispositivo_individual_falabella(dispositivo: str, fecha_scra
     await asyncio.sleep(0.1)
     
     async with async_playwright() as p:
+        browser = None
+        context = None
+        page = None
+        
         for intento in range(3):
             try:
                 user_agent = random.choice(USER_AGENTS)
                 print(f"🖥️ User-Agent usado: {user_agent}")
-                browser = await p.chromium.launch(headless=True, args=[f'--user-agent={user_agent}'])
-                page = await browser.new_page()
-                await page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+                
+                # Crear browser con opciones optimizadas
+                browser = await p.chromium.launch(
+                    headless=True, 
+                    args=[
+                        f'--user-agent={user_agent}',
+                        '--no-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--disable-web-security',
+                        '--disable-features=VizDisplayCompositor'
+                    ]
+                )
+                
+                # Crear context con configuración optimizada
+                context = await browser.new_context(
+                    viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+                    user_agent=user_agent
+                )
+                
+                # Crear página
+                page = await context.new_page()
                 
                 print(f"🔍 Búsqueda: {dispositivo}")
                 await asyncio.sleep(random.uniform(0.05, 0.15))
@@ -437,11 +553,36 @@ async def procesar_dispositivo_individual_falabella(dispositivo: str, fecha_scra
                 else:
                     print(f"⚠️ No se encontraron productos para {dispositivo}")
                 
-                await browser.close()
+                # Limpieza explícita y ordenada
+                if page:
+                    await page.close()
+                if context:
+                    await context.close()
+                if browser:
+                    await browser.close()
+                
                 break  # Si llegamos aquí, el procesamiento fue exitoso
                 
             except Exception as e:
                 print(f"❌ Error en intento {intento + 1} para {dispositivo}: {str(e)}")
+                
+                # Limpieza en caso de error
+                try:
+                    if page:
+                        await page.close()
+                except:
+                    pass
+                try:
+                    if context:
+                        await context.close()
+                except:
+                    pass
+                try:
+                    if browser:
+                        await browser.close()
+                except:
+                    pass
+                
                 if intento == 2:  # Último intento
                     print(f"❌ Falló después de 3 intentos para {dispositivo}")
                 else:
@@ -548,6 +689,8 @@ async def procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha
     """Procesa productos en lotes para reducir CPU y memoria"""
     productos_dispositivo = []
     TAMANO_LOTE = 4  # Procesar 4 productos por lote
+    fallos_consecutivos = 0
+    MAX_FALLOS_CONSECUTIVOS = 3  # Saltar lote si hay muchos fallos seguidos
     
     # Dividir productos en lotes
     lotes = [productos_busqueda[i:i + TAMANO_LOTE] for i in range(0, len(productos_busqueda), TAMANO_LOTE)]
@@ -557,6 +700,14 @@ async def procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha
     for lote_idx, lote in enumerate(lotes):
         print(f"[LOTE {lote_idx + 1}/{len(lotes)}] Procesando {len(lote)} productos...")
         
+        # Verificar si hay demasiados fallos consecutivos
+        if fallos_consecutivos >= MAX_FALLOS_CONSECUTIVOS:
+            print(f"[SKIP] Demasiados fallos consecutivos ({fallos_consecutivos}), saltando lote...")
+            fallos_consecutivos = 0  # Resetear contador
+            continue
+        
+        fallos_lote = 0
+        
         # Procesar productos del lote sin delays individuales
         for i, producto in enumerate(lote):
             print(f"  🔍 Procesando producto {i+1}/{len(lote)}: {producto['nombre'][:50]}...")
@@ -565,11 +716,20 @@ async def procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha
             try:
                 producto_con_detalles = await extraer_detalles_producto_falabella(page, producto, fecha_scraping)
                 productos_dispositivo.append(producto_con_detalles)
+                fallos_consecutivos = 0  # Resetear contador de fallos
             except Exception as e:
                 print(f"    ❌ Error procesando producto: {str(e)}")
                 producto['fecha_scraping'] = fecha_scraping
                 productos_dispositivo.append(producto)
+                fallos_lote += 1
+                fallos_consecutivos += 1
                 continue
+        
+        # Actualizar contador de fallos consecutivos
+        if fallos_lote == len(lote):
+            print(f"[WARN] Todos los productos del lote fallaron")
+        else:
+            fallos_consecutivos = 0  # Resetear si al menos uno funcionó
         
         # Delay solo al final de cada lote (no entre productos individuales)
         if lote_idx < len(lotes) - 1:  # No delay en el último lote
@@ -582,6 +742,25 @@ async def procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha
     
     print(f"[LOTES] Procesamiento por lotes completado: {len(productos_dispositivo)} productos")
     return productos_dispositivo
+
+async def limpiar_cache_playwright():
+    """Limpia el caché de Playwright para evitar errores de sincronización"""
+    try:
+        cache_paths = [
+            "/root/.cache/ms-playwright",
+            os.path.expanduser("~/.cache/ms-playwright"),
+            "/tmp/ms-playwright"
+        ]
+        
+        for cache_path in cache_paths:
+            if os.path.exists(cache_path):
+                shutil.rmtree(cache_path)
+                print(f"[CACHE] Caché limpiado: {cache_path}")
+        
+        print("[CACHE] Limpieza de caché de Playwright completada")
+        
+    except Exception as e:
+        print(f"[WARN] Error limpiando caché de Playwright: {e}")
 
 async def liberar_memoria_falabella():
     """Libera memoria explícitamente"""

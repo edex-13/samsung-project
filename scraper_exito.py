@@ -4,6 +4,7 @@ import pandas as pd
 import random
 import gc
 import os
+import shutil
 from datetime import datetime
 from playwright.async_api import async_playwright
 
@@ -36,6 +37,9 @@ async def scrape_exito():
     fecha_scraping = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[INICIANDO] Scraper Exito para {len(DISPOSITIVOS)} dispositivos")
     print("=" * 60)
+    
+    # Limpiar caché de Playwright al inicio
+    await limpiar_cache_playwright()
     
     # Lista para almacenar archivos temporales
     archivos_temporales = []
@@ -82,13 +86,36 @@ async def procesar_dispositivo_individual(dispositivo: str, fecha_scraping: str)
     await asyncio.sleep(0.1)
     
     async with async_playwright() as p:
+        browser = None
+        context = None
+        page = None
+        
         for intento in range(3):
             try:
                 user_agent = random.choice(USER_AGENTS)
                 print(f"[PC] User-Agent usado: {user_agent}")
-                browser = await p.chromium.launch(headless=True, args=[f'--user-agent={user_agent}'])
-                page = await browser.new_page()
-                await page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+                
+                # Crear browser con opciones optimizadas
+                browser = await p.chromium.launch(
+                    headless=True, 
+                    args=[
+                        f'--user-agent={user_agent}',
+                        '--no-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--disable-web-security',
+                        '--disable-features=VizDisplayCompositor'
+                    ]
+                )
+                
+                # Crear context con configuración optimizada
+                context = await browser.new_context(
+                    viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+                    user_agent=user_agent
+                )
+                
+                # Crear página
+                page = await context.new_page()
                 
                 print(f"[LUP] Búsqueda: {dispositivo}")
                 await asyncio.sleep(random.uniform(0.05, 0.15))
@@ -101,11 +128,36 @@ async def procesar_dispositivo_individual(dispositivo: str, fecha_scraping: str)
                 else:
                     print(f"[WARN] No se encontraron productos para {dispositivo}")
                 
-                await browser.close()
+                # Limpieza explícita y ordenada
+                if page:
+                    await page.close()
+                if context:
+                    await context.close()
+                if browser:
+                    await browser.close()
+                
                 break  # Si llegamos aquí, el procesamiento fue exitoso
                 
             except Exception as e:
                 print(f"[ERROR] Error en intento {intento + 1} para {dispositivo}: {str(e)}")
+                
+                # Limpieza en caso de error
+                try:
+                    if page:
+                        await page.close()
+                except:
+                    pass
+                try:
+                    if context:
+                        await context.close()
+                except:
+                    pass
+                try:
+                    if browser:
+                        await browser.close()
+                except:
+                    pass
+                
                 if intento == 2:  # Último intento
                     print(f"[ERROR] Falló después de 3 intentos para {dispositivo}")
                 else:
@@ -246,6 +298,25 @@ async def procesar_productos_por_lotes_exito(page, productos_busqueda, fecha_scr
     
     print(f"[LOTES] Procesamiento por lotes completado: {len(productos_dispositivo)} productos")
     return productos_dispositivo
+
+async def limpiar_cache_playwright():
+    """Limpia el caché de Playwright para evitar errores de sincronización"""
+    try:
+        cache_paths = [
+            "/root/.cache/ms-playwright",
+            os.path.expanduser("~/.cache/ms-playwright"),
+            "/tmp/ms-playwright"
+        ]
+        
+        for cache_path in cache_paths:
+            if os.path.exists(cache_path):
+                shutil.rmtree(cache_path)
+                print(f"[CACHE] Caché limpiado: {cache_path}")
+        
+        print("[CACHE] Limpieza de caché de Playwright completada")
+        
+    except Exception as e:
+        print(f"[WARN] Error limpiando caché de Playwright: {e}")
 
 async def liberar_memoria():
     """Libera memoria explícitamente"""
