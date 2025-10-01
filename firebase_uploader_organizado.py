@@ -221,6 +221,8 @@ def procesar_archivo_excel(archivo, tipo):
                 dato['comercio'] = 'Éxito'
             elif 'falabella' in nombre_archivo:
                 dato['comercio'] = 'Falabella'
+            elif 'ktronix' in nombre_archivo:
+                dato['comercio'] = 'Ktronix'
             elif 'mercadolibre' in nombre_archivo:
                 dato['comercio'] = 'MercadoLibre'
             else:

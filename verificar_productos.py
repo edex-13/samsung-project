@@ -315,6 +315,112 @@ def verificar_modelo_estricto(nombre_producto, dispositivo_buscado):
     
     return False, None, 0, "no_samsung"
 
+def estandarizar_columnas_precio(df):
+    """
+    Estandariza todas las columnas de precio para que todos los scrapers tengan el mismo formato
+    Columnas estándar:
+    - precio_actual: Precio principal actual
+    - precio_original: Precio original (antes del descuento)
+    - porcentaje_descuento: Porcentaje de descuento
+    - precio_promocion: Precio promocional (si aplica)
+    """
+    
+    # Crear columnas estándar si no existen
+    if 'precio_actual' not in df.columns:
+        df['precio_actual'] = None
+    if 'precio_original' not in df.columns:
+        df['precio_original'] = None
+    if 'porcentaje_descuento' not in df.columns:
+        df['porcentaje_descuento'] = None
+    if 'precio_promocion' not in df.columns:
+        df['precio_promocion'] = None
+    
+    for idx, row in df.iterrows():
+        # Obtener todos los precios disponibles
+        precios_disponibles = {}
+        
+        # Precios de Éxito
+        if 'precio_actual' in df.columns and pd.notna(row.get('precio_actual')):
+            precios_disponibles['precio_actual_exito'] = row.get('precio_actual')
+        if 'precio_promocion' in df.columns and pd.notna(row.get('precio_promocion')):
+            precios_disponibles['precio_promocion_exito'] = row.get('precio_promocion')
+        
+        # Precios de Falabella
+        if 'precio_tarjeta_falabella' in df.columns and pd.notna(row.get('precio_tarjeta_falabella')):
+            precios_disponibles['precio_tarjeta_falabella'] = row.get('precio_tarjeta_falabella')
+        if 'precio_descuento' in df.columns and pd.notna(row.get('precio_descuento')):
+            precios_disponibles['precio_descuento_falabella'] = row.get('precio_descuento')
+        if 'precio_normal' in df.columns and pd.notna(row.get('precio_normal')):
+            precios_disponibles['precio_normal_falabella'] = row.get('precio_normal')
+        
+        # Precios de Ktronix
+        if 'precio_ktronix' in df.columns and pd.notna(row.get('precio_ktronix')):
+            precios_disponibles['precio_ktronix'] = row.get('precio_ktronix')
+        if 'precio_listado' in df.columns and pd.notna(row.get('precio_listado')):
+            precios_disponibles['precio_listado_ktronix'] = row.get('precio_listado')
+        
+        # Precios de MercadoLibre
+        if 'precio_meli' in df.columns and pd.notna(row.get('precio_meli')):
+            precios_disponibles['precio_meli'] = row.get('precio_meli')
+        
+        # Lógica de estandarización
+        precio_actual = None
+        precio_original = None
+        porcentaje_descuento = 0
+        precio_promocion = None
+        
+        # Prioridad 1: Si hay precio_actual de Éxito, usarlo
+        if 'precio_actual_exito' in precios_disponibles:
+            precio_actual = precios_disponibles['precio_actual_exito']
+            if 'precio_promocion_exito' in precios_disponibles:
+                precio_original = precios_disponibles['precio_promocion_exito']
+                precio_promocion = precios_disponibles['precio_promocion_exito']
+                # Calcular porcentaje de descuento
+                if precio_original and precio_actual:
+                    descuento = ((precio_original - precio_actual) / precio_original) * 100
+                    porcentaje_descuento = int(descuento) if descuento > 0 else 0
+        
+        # Prioridad 2: Si hay precio de Ktronix
+        elif 'precio_ktronix' in precios_disponibles:
+            precio_actual = precios_disponibles['precio_ktronix']
+            precio_original = precios_disponibles['precio_ktronix']  # Sin descuento
+        
+        # Prioridad 3: Si hay precio de MercadoLibre
+        elif 'precio_meli' in precios_disponibles:
+            precio_actual = precios_disponibles['precio_meli']
+            precio_original = precios_disponibles['precio_meli']  # Sin descuento
+        
+        # Prioridad 4: Si hay precio de Falabella
+        elif 'precio_tarjeta_falabella' in precios_disponibles:
+            precio_actual = precios_disponibles['precio_tarjeta_falabella']
+            if 'precio_normal_falabella' in precios_disponibles:
+                precio_original = precios_disponibles['precio_normal_falabella']
+                # Calcular porcentaje de descuento
+                if precio_original and precio_actual:
+                    descuento = ((precio_original - precio_actual) / precio_original) * 100
+                    porcentaje_descuento = int(descuento) if descuento > 0 else 0
+            else:
+                precio_original = precio_actual
+        
+        elif 'precio_descuento_falabella' in precios_disponibles:
+            precio_actual = precios_disponibles['precio_descuento_falabella']
+            if 'precio_normal_falabella' in precios_disponibles:
+                precio_original = precios_disponibles['precio_normal_falabella']
+                # Calcular porcentaje de descuento
+                if precio_original and precio_actual:
+                    descuento = ((precio_original - precio_actual) / precio_original) * 100
+                    porcentaje_descuento = int(descuento) if descuento > 0 else 0
+            else:
+                precio_original = precio_actual
+        
+        # Actualizar el DataFrame con los valores estandarizados
+        df.at[idx, 'precio_actual'] = precio_actual
+        df.at[idx, 'precio_original'] = precio_original
+        df.at[idx, 'porcentaje_descuento'] = porcentaje_descuento
+        df.at[idx, 'precio_promocion'] = precio_promocion
+    
+    return df
+
 def crear_archivo_limpio(df_validos, nombre_archivo):
     """
     Crea un archivo limpio con solo las columnas de datos y características extraídas
@@ -330,21 +436,22 @@ def crear_archivo_limpio(df_validos, nombre_archivo):
         os.makedirs(data_dir)
         print(f"   📁 Carpeta '{data_dir}' creada")
     
-    # Columnas que queremos mantener (datos originales) - SIN la columna 'modelo'
-    columnas_datos = [
-        'url', 'nombre', 'dispositivo', 'fecha_scraping', 'precio_promocion', 
-        'precio_actual', 'porcentaje_descuento', 'memoria_interna', 'memoria_ram', 
-        'color', 'condicion', 'vendedor'
+    # Columnas estándar que SIEMPRE deben estar presentes (después de estandarización)
+    columnas_estandar = [
+        'url', 'nombre', 'dispositivo', 'fecha_scraping', 
+        'precio_actual', 'precio_original', 'porcentaje_descuento', 'precio_promocion',
+        'memoria_interna', 'memoria_ram', 'color', 'condicion', 'vendedor'
     ]
     
     # Columnas adicionales que pueden existir en algunos archivos
     columnas_adicionales = [
-        'precio_tarjeta_falabella', 'precio_descuento', 'precio_normal'
+        'moneda', 'envio_gratis', 'vendedor_verificado', 'ubicacion',
+        'producto_id', 'categoria', 'imagenes'
     ]
     
     # Filtrar solo las columnas que existen en el DataFrame
     columnas_finales = []
-    for col in columnas_datos + columnas_adicionales:
+    for col in columnas_estandar + columnas_adicionales:
         if col in df_validos.columns:
             columnas_finales.append(col)
     
@@ -353,6 +460,9 @@ def crear_archivo_limpio(df_validos, nombre_archivo):
     
     # Crear DataFrame limpio
     df_limpio = df_validos[columnas_finales].copy()
+    
+    # Estandarizar columnas de precio para que todos tengan el mismo formato
+    df_limpio = estandarizar_columnas_precio(df_limpio)
     
     # Guardar archivo limpio en la carpeta correcta (usando data_dir)
     archivo_limpio = f"{data_dir}/{nombre_archivo}_limpio.xlsx"
