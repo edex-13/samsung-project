@@ -8,6 +8,9 @@ import shutil
 from datetime import datetime
 from playwright.async_api import async_playwright
 
+# Asegurar ruta local y persistente para navegadores de Playwright
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/root/samsung-project/pw-browsers")
+
 # Configuración
 DISPOSITIVOS = [
     "samsung galaxy s25 ultra",
@@ -19,7 +22,7 @@ DISPOSITIVOS = [
 MAX_PAGINAS = 1
 VIEWPORT_WIDTH = 1920
 VIEWPORT_HEIGHT = 1080
-TIMEOUT_PRODUCTOS = 8000   # Aumentado para permitir carga completa de JS
+TIMEOUT_PRODUCTOS = 30000   # Aumentado para permitir carga completa de JS
 DELAY_ENTRE_BUSQUEDAS = 0.5   # Ultra agresivo: reducido de 1 a 0.5
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -46,55 +49,81 @@ async def scrape_busqueda_inicial_falabella(page, dispositivo: str):
         # Reintentos para cada página
         for intento in range(3):
             try:
-                timeout = random.randint(5000, 8000)   # Aumentado para permitir carga completa
+                timeouts = [20000, 35000, 45000]
+                timeout = timeouts[intento]
                 print(f"🔄 Intentando cargar página {pagina_actual} (intento {intento + 1}/3)")
-                await page.goto(url_pagina, wait_until="networkidle", timeout=timeout)
-                # Espera adicional para asegurar carga de JS
-                await asyncio.sleep(1.0)  # Aumentado para permitir carga completa de elementos dinámicos
-                
+
+                # Estrategia de carga progresiva
+                carga_exitosa = False
                 try:
-                    # Intentar esperar por múltiples selectores de productos
-                    selectores_espera = [
-                        "a[data-pod]",  # Selector principal para tarjetas de producto
-                        ".pod-item",
-                        ".search-results-list .pod",
-                        "[data-testid*='product']"
-                    ]
-                    
-                    elemento_encontrado = False
-                    for selector in selectores_espera:
-                        try:
-                            await page.wait_for_selector(selector, timeout=TIMEOUT_PRODUCTOS//len(selectores_espera))
-                            elemento_encontrado = True
-                            break
-                        except:
-                            continue
-                    
-                    if elemento_encontrado:
-                        break  # Si encuentra algún selector, salir del bucle de reintentos
-                    else:
+                    await page.goto(url_pagina, wait_until="domcontentloaded", timeout=timeout)
+                    carga_exitosa = True
+                except Exception:
+                    try:
+                        await page.goto(url_pagina, wait_until="networkidle", timeout=timeout)
+                        carga_exitosa = True
+                    except Exception:
+                        await page.goto(url_pagina, wait_until="load", timeout=timeout)
+                        carga_exitosa = True
+
+                if not carga_exitosa:
+                    raise Exception("No se pudo cargar la página de resultados")
+
+                # Intentar cerrar banners/cookies si aparecen
+                try:
+                    await manejar_banners_cookies_falabella(page)
+                except Exception:
+                    pass
+
+                # Espera adicional breve para asegurar carga de elementos dinámicos
+                await asyncio.sleep(0.8)
+
+                # Intentar esperar por múltiples selectores de productos
+                selectores_espera = [
+                    "a[data-pod]",
+                    ".pod-item",
+                    ".search-results-list .pod",
+                    "[data-testid*='product']",
+                    "a.pod-link",
+                    "a.catalog-product",
+                    "li.catalog-grid__cell a",
+                    "a[qa-id='product-name']",
+                    "[data-qa*='product'] a"
+                ]
+
+                elemento_encontrado = False
+                for selector in selectores_espera:
+                    try:
+                        await page.wait_for_selector(selector, timeout=TIMEOUT_PRODUCTOS // 2)
+                        elemento_encontrado = True
+                        break
+                    except Exception:
+                        continue
+
+                if elemento_encontrado:
+                    break  # Si encuentra algún selector, salir del bucle de reintentos
+                else:
+                    if intento == 2:
                         raise Exception("No se encontraron elementos de productos")
-                except:
-                    if intento == 2:  # Último intento
-                        print(f"    ❌ No se encontraron elementos de productos después de 3 intentos")
-                        # Guardar HTML para depuración
+                    print(f"    ⚠️ No se encontraron elementos; reintentando con mayor timeout...")
+                    await asyncio.sleep(0.5)
+                    continue
+
+            except Exception as e:
+                if intento == 2:  # Último intento
+                    print(f"    ❌ Error en página {pagina_actual} después de 3 intentos: {str(e)}")
+                    # Guardar HTML para depuración
+                    try:
                         html = await page.content()
                         with open(f"debug_falabella_{dispositivo.replace(' ','_')}.html", "w", encoding="utf-8") as f:
                             f.write(html)
                         print(f"    📝 HTML guardado para depuración: debug_falabella_{dispositivo.replace(' ','_')}.html")
-                        return productos
-                    else:
-                        print(f"    ⚠️ Intento {intento + 1} fallido, reintentando...")
-                        await asyncio.sleep(0.05)  # Ultra agresivo: reducido de 0.1 a 0.05
-                        continue
-                        
-            except Exception as e:
-                if intento == 2:  # Último intento
-                    print(f"    ❌ Error en página {pagina_actual} después de 3 intentos: {str(e)}")
+                    except Exception:
+                        pass
                     return productos
                 else:
                     print(f"    ⚠️ Error en intento {intento + 1}: {str(e)}, reintentando...")
-                    await asyncio.sleep(0.2)  # Ultra agresivo: reducido de 0.5 a 0.2
+                    await asyncio.sleep(0.6)
                     continue
         
         productos_pagina = await extraer_productos_pagina_falabella(page, dispositivo)
@@ -116,11 +145,16 @@ async def extraer_productos_pagina_falabella(page, dispositivo: str):
     
     # Intentar múltiples selectores para encontrar productos
     selectores_productos = [
-        "a[data-pod]",  # Selector principal para tarjetas de producto
+        "a[data-pod]",
         ".pod-item",
         ".search-results-list .pod",
         "[data-testid*='product']",
-        ".product-item"
+        ".product-item",
+        "a.pod-link",
+        "a.catalog-product",
+        "li.catalog-grid__cell a",
+        "a[qa-id='product-name']",
+        "[data-qa*='product'] a"
     ]
     
     elementos_producto = []
@@ -463,9 +497,6 @@ async def scrape_falabella():
     print(f"🚀 Iniciando scraper Falabella/Linio para {len(DISPOSITIVOS)} dispositivos")
     print("=" * 60)
     
-    # Limpiar caché de Playwright al inicio
-    await limpiar_cache_playwright()
-    
     # Lista para almacenar archivos temporales
     archivos_temporales = []
     
@@ -536,11 +567,22 @@ async def procesar_dispositivo_individual_falabella(dispositivo: str, fecha_scra
                 # Crear context con configuración optimizada
                 context = await browser.new_context(
                     viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
-                    user_agent=user_agent
+                    user_agent=user_agent,
+                    locale="es-CO",
+                    extra_http_headers={
+                        "Accept-Language": "es-CO,es;q=0.9",
+                        "Upgrade-Insecure-Requests": "1"
+                    }
                 )
                 
                 # Crear página
                 page = await context.new_page()
+                # Timeouts por defecto más holgados
+                try:
+                    page.set_default_navigation_timeout(45000)
+                    page.set_default_timeout(45000)
+                except Exception:
+                    pass
                 
                 print(f"🔍 Búsqueda: {dispositivo}")
                 await asyncio.sleep(random.uniform(0.05, 0.15))
@@ -742,6 +784,28 @@ async def procesar_productos_por_lotes_falabella(page, productos_busqueda, fecha
     
     print(f"[LOTES] Procesamiento por lotes completado: {len(productos_dispositivo)} productos")
     return productos_dispositivo
+
+async def manejar_banners_cookies_falabella(page):
+    """Intenta cerrar banners de cookies o consentimientos comunes en Falabella/Linio."""
+    posibles_selectores = [
+        "button#testId-accept-cookies-button",
+        "button#testId-accept-cookies-btn",
+        "button[aria-label*='Aceptar']",
+        "button:has-text('Aceptar')",
+        "button:has-text('Aceptar todas')",
+        "button:has-text('Aceptar todo')",
+        "#onetrust-accept-btn-handler",
+        "button.ot-pc-refuse-all-handler",
+    ]
+    for selector in posibles_selectores:
+        try:
+            boton = await page.query_selector(selector)
+            if boton:
+                await boton.click()
+                await asyncio.sleep(0.2)
+                break
+        except Exception:
+            continue
 
 async def limpiar_cache_playwright():
     """Limpia el caché de Playwright para evitar errores de sincronización"""
