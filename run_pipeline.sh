@@ -14,7 +14,7 @@ else
 fi
 cd "$PROJECT_DIR"
 
-echo -e "${B}==> [$(date '+%Y-%m-%d %H:%M:%S')] Iniciando pipeline de scraping (Éxito + Falabella + Ktronix + MercadoLibre)${NC}"
+echo -e "${B}==> [$(date '+%Y-%m-%d %H:%M:%S')] Iniciando pipeline de scraping (Éxito + Falabella + Ktronix)${NC}"
 echo -e "${B}==> Directorio: ${NC}$PROJECT_DIR"
 echo -e "${B}==> Usuario: ${NC}$(whoami)  |  Shell: $SHELL"
 
@@ -166,9 +166,8 @@ run_scraper() {
 }
 
 run_scraper "Ktronix" "scraper_ktronix.py"
-run_scraper "MercadoLibre" "scraper_mercadolibre.py"
-# run_scraper "Falabella" "scraper_falabella.py"
-# run_scraper "Éxito" "scraper_exito.py"
+run_scraper "Falabella" "scraper_falabella.py"
+run_scraper "Éxito" "scraper_exito.py"
 
 # 7) Verificación y limpieza de productos
 # Este script genera archivos en carpeta data: *_limpio.xlsx e *_invalidos.xlsx

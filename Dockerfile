@@ -27,7 +27,9 @@ COPY requirements*.txt ./
 RUN echo "playwright==1.40.0" > requirements_docker.txt && \
     echo "pandas==2.1.4" >> requirements_docker.txt && \
     echo "openpyxl==3.1.2" >> requirements_docker.txt && \
-    echo "firebase-admin==6.2.0" >> requirements_docker.txt && \
+    echo "firebase-admin==6.4.0" >> requirements_docker.txt && \
+    echo "google-cloud-firestore==2.13.1" >> requirements_docker.txt && \
+    echo "google-api-core==2.11.1" >> requirements_docker.txt && \
     echo "requests==2.31.0" >> requirements_docker.txt && \
     echo "beautifulsoup4==4.12.2" >> requirements_docker.txt
 
